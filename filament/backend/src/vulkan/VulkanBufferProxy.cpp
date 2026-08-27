@@ -55,8 +55,13 @@ void VulkanBufferProxy::loadFromCpu(VulkanCommandBuffer& commands, const void* c
     // a memcpy if its available.
     bool const isStaticOrShared =
             any(mUsage & (BufferUsage::STATIC | BufferUsage::SHARED_WRITE_BIT));
+    // creator-gl patch 0011: STATIC is only "written once" by convention. VertexBuffer/IndexBuffer
+    // always create STATIC buffer objects, so per-frame setBufferAt streams (particles, ribbons) land
+    // here too, and on a UMA device every buffer is mapped: the memcpy lands in a buffer a still-
+    // executing command buffer may be reading, tearing its vertices (giant stretched quads once
+    // frames overlap on the GPU). Only bypass the staged, barriered copy while nothing references it.
     bool const useMemcpy =
-            ((isAvailable && mStagingBufferBypassEnabled) || isStaticOrShared) && isMemcopyable;
+            isAvailable && (mStagingBufferBypassEnabled || isStaticOrShared) && isMemcopyable;
     if (useMemcpy) {
         char* dest = static_cast<char*>(mBuffer->getGpuBuffer()->allocationInfo.pMappedData) +
                      byteOffset;
