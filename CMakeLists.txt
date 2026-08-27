@@ -998,8 +998,11 @@ add_subdirectory(${FILAMENT}/filament)
 set(FILAMENT_SAMPLES_BINARY_DIR ${PROJECT_BINARY_DIR}/samples)
 
 if (WASM)
-    add_subdirectory(web/filament-js)
-    add_subdirectory(web/examples)
+    # creator-gl builds its OWN wasm module (packages/creator-gl/build-wasm.sh); Filament's
+    # filament-js bindings and web examples are dead weight there (and pull in emscripten
+    # bindings we don't link). Skip them.
+    # add_subdirectory(web/filament-js)
+    # add_subdirectory(web/examples)
 endif()
 
 if (IS_HOST_PLATFORM OR ANDROID)
