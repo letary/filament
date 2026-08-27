@@ -243,16 +243,17 @@ void FMaterialInstance::commit(FEngine::DriverApi& driver, UboManager* uboManage
 
 
     if (mUniforms.isDirty()) {
-        mUniforms.clean();
         if (isUsingUboBatching()) {
-            if (!BufferAllocator::isValid(getAllocationId())) {
-                // The allocation hasn't happened yet, return.
-                return;
+            if (BufferAllocator::isValid(getAllocationId())) {
+                mUniforms.clean();
+                uboManager->updateSlot(driver, getAllocationId(),
+                        mUniforms.toBufferDescriptor(driver));
             }
-
-            uboManager->updateSlot(driver, getAllocationId(), mUniforms.toBufferDescriptor(driver));
+            // No slot yet: leave mUniforms DIRTY so the upload still happens on the commit after
+            // the allocation lands. (Cleaning it here dropped that upload permanently.)
         }
         else {
+            mUniforms.clean();
             auto* ubHandle = std::get_if<Handle<HwBufferObject>>(&mUboData);
             assert_invariant(ubHandle != nullptr);
             driver.updateBufferObject(*ubHandle, mUniforms.toBufferDescriptor(driver), 0);
@@ -262,11 +263,22 @@ void FMaterialInstance::commit(FEngine::DriverApi& driver, UboManager* uboManage
     // TODO: eventually we should remove this in RELEASE builds
     fixMissingSamplers();
 
-    if (isUsingUboBatching() && !BufferAllocator::isValid(getAllocationId())) {
-        return;
-    }
-
-    // Commit descriptors if needed (e.g. when textures are updated,or the first time)
+    // Commit the descriptor set UNCONDITIONALLY -- in particular even when the UBO slot has not
+    // been allocated yet. use() binds this set with no null check (DescriptorSet::bind only
+    // asserts, and that is a no-op in RELEASE), so leaving mDescriptorSetHandle null makes the
+    // Metal driver take its `!dsh` path and bind NIL at [[buffer(23)]] (set 2 = PER_MATERIAL),
+    // aborting the next draw with:
+    //   "Fragment Function(main0): missing Buffer binding at index 23 for spvDescriptorSet2[0]"
+    //
+    // A MaterialInstance created and drawn within the same frame hits this: it starts UNALLOCATED
+    // in UboManager::mPendingInstances (or REALLOCATION_REQUIRED once the shared UBO is full) and
+    // only gets a slot from a later allocateOnDemand().
+    //
+    // Committing early is safe: the material-params buffer descriptor is simply not valid yet, and
+    // the backends already substitute a placeholder for unset descriptors (Metal binds
+    // context->emptyBuffer -- see MetalDescriptorSet::finalizeAndGetBuffer). So the instance draws
+    // with zeroed params for at most one frame, then self-corrects: assignUboAllocation() sets the
+    // real buffer, which re-dirties the set and re-commits it.
     mDescriptorSet.commit(mMaterial->getDescriptorSetLayout(), driver);
 }
 
