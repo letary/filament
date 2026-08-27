@@ -1115,7 +1115,10 @@ void FRenderer::renderJob(DriverApi& driver, RootArenaScope& rootArenaScope, FVi
             .clearFlags = getClearFlags(),
             .clearColor = clearColor,
             .clearStencil = clearStencil,
-            .hasContactShadows = view.hasContactShadows(),
+            // creator-gl patch 0017: a View that wants scene depth in its materials (soft particles)
+            // takes the contact-shadow path — the structure pass stays alive and its texture is
+            // bound to the color pass (RendererUtils::colorPass) instead of the 1x1 dummy.
+            .hasContactShadows = view.hasContactShadows() || view.isStructureSamplingEnabled(),
             // at this point we don't know if we have refraction, but that's handled later
             .hasScreenSpaceReflectionsOrRefractions = ssReflectionsOptions.enabled,
             .enabledStencilBuffer = view.isStencilBufferEnabled(),

@@ -253,6 +253,10 @@ public:
 
     bool isStencilBufferEnabled() const noexcept { return mStencilBufferEnabled; }
 
+    // creator-gl patch 0017 (see View.h): force the structure buffer into the color pass
+    void setStructureSamplingEnabled(bool const enabled) noexcept { mStructureSamplingEnabled = enabled; }
+    bool isStructureSamplingEnabled() const noexcept { return mStructureSamplingEnabled; }
+
     void setStereoscopicOptions(StereoscopicOptions const& options) noexcept;
 
     utils::FixedCapacityVector<Camera const*> getDirectionalShadowCameras() const noexcept {
@@ -625,6 +629,7 @@ private:
     bool mScreenSpaceRefractionEnabled = true;
     bool mHasPostProcessPass = true;
     bool mStencilBufferEnabled = false;
+    bool mStructureSamplingEnabled = false;   // creator-gl patch 0017
     AmbientOcclusionOptions mAmbientOcclusionOptions{};
     ShadowType mShadowType = ShadowType::PCF;
     VsmShadowOptions mVsmShadowOptions; // FIXME: this should probably be per-light
