@@ -35,6 +35,10 @@
 #include <utils/Logger.h>
 #include <utils/Panic.h>
 
+#include <chrono>               // local patch 0008: frame-fence hand-off to the embedding host
+#include <condition_variable>
+#include <mutex>
+
 namespace {
 
 void reportWindowsError(DWORD dwError) {
@@ -70,7 +74,43 @@ struct WGLSwapChain {
     HDC hDc = NULL;
     HWND hWnd = NULL;
     bool isHeadless = false;
+    bool noPresent = false;   // SWAP_CHAIN_CONFIG_NO_PRESENT: the host presents this window itself
 };
+
+// Local (non-upstream) swap chain flag: render into the window's default framebuffer but do NOT
+// SwapBuffers in commit() — the embedding host draws its own UI over the frame from another
+// context on the same HDC and presents once. Bit 62 keeps clear of upstream's low bits.
+static constexpr uint64_t SWAP_CHAIN_CONFIG_NO_PRESENT = 1ull << 62;
+
+// Local (non-upstream): the pixel-format INDEX to create the driver context and every swap chain
+// with, instead of ChoosePixelFormat(mPfd). wglMakeCurrent() only accepts an HDC whose format index
+// matches the context's, so a host that wants Filament to render into a window whose format was
+// already chosen by another GL library (tgfx) must hand that index over BEFORE the engine exists.
+// 0 = upstream behaviour.
+static int sPreferredPixelFormat = 0;
+
+// Local (non-upstream): the fence of the last committed NO_PRESENT frame (see commit()).
+static std::mutex sFrameFenceLock;
+static std::condition_variable sFrameFenceCv;
+static GLsync sFrameFence = nullptr;
+extern "C" void filament_wgl_setPreferredPixelFormat(int pixelFormat) {
+    sPreferredPixelFormat = pixelFormat;
+}
+static int applyPixelFormat(HDC hdc, const PIXELFORMATDESCRIPTOR& pfd) {
+    if (sPreferredPixelFormat > 0) {
+        PIXELFORMATDESCRIPTOR desc = {};
+        if (DescribePixelFormat(hdc, sPreferredPixelFormat, sizeof(desc), &desc)
+                && SetPixelFormat(hdc, sPreferredPixelFormat, &desc)) {
+            return sPreferredPixelFormat;
+        }
+        // SetPixelFormat fails on a window that ALREADY has that exact format (the host's window) —
+        // that is the case we want; only fall through when the format truly isn't set.
+        if (GetPixelFormat(hdc) == sPreferredPixelFormat) return sPreferredPixelFormat;
+    }
+    int pixelFormat = ChoosePixelFormat(hdc, &pfd);
+    SetPixelFormat(hdc, pixelFormat, &pfd);
+    return pixelFormat;
+}
 
 static PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribs = nullptr;
 
@@ -183,8 +223,7 @@ Driver* PlatformWGL::createDriver(void* sharedGLContext,
         goto error;
     }
 
-    pixelFormat = ChoosePixelFormat(whdc, &mPfd);
-    SetPixelFormat(whdc, pixelFormat, &mPfd);
+    pixelFormat = applyPixelFormat(whdc, mPfd);
 
     // We need a tmp context to retrieve and call wglCreateContextAttribsARB.
     tempContext = wglCreateContext(whdc);
@@ -296,6 +335,7 @@ void PlatformWGL::terminate() noexcept {
 Platform::SwapChain* PlatformWGL::createSwapChain(void* nativeWindow, uint64_t flags) noexcept {
     auto* swapChain = new WGLSwapChain();
     swapChain->isHeadless = false;
+    swapChain->noPresent = (flags & SWAP_CHAIN_CONFIG_NO_PRESENT) != 0;
 
     // on Windows, the nativeWindow maps to a HWND
     swapChain->hWnd = (HWND) nativeWindow;
@@ -308,8 +348,7 @@ Platform::SwapChain* PlatformWGL::createSwapChain(void* nativeWindow, uint64_t f
     }
 
 	// We have to match pixel formats across the HDC and HGLRC (mContext)
-    int pixelFormat = ChoosePixelFormat(swapChain->hDc, &mPfd);
-    SetPixelFormat(swapChain->hDc, pixelFormat, &mPfd);
+    applyPixelFormat(swapChain->hDc, mPfd);
 
     return (Platform::SwapChain*) swapChain;
 }
@@ -329,8 +368,7 @@ Platform::SwapChain* PlatformWGL::createSwapChain(uint32_t width, uint32_t heigh
     swapChain->hWnd = CreateWindowA("STATIC", "headless", WS_POPUP, 0, 0,
             width, height, NULL, NULL, NULL, NULL);
     swapChain->hDc = GetDC(swapChain->hWnd);
-    int pixelFormat = ChoosePixelFormat(swapChain->hDc, &mPfd);
-    SetPixelFormat(swapChain->hDc, pixelFormat, &mPfd);
+    applyPixelFormat(swapChain->hDc, mPfd);
 
     return (Platform::SwapChain*) swapChain;
 }
@@ -375,8 +413,39 @@ void PlatformWGL::commit(Platform::SwapChain* swapChain) noexcept {
     auto* wglSwapChain = (WGLSwapChain*) swapChain;
     HDC hdc = wglSwapChain->hDc;
     if (hdc != NULL) {
-        SwapBuffers(hdc);
+        if (wglSwapChain->noPresent) {
+            // The host draws over this frame from ANOTHER context and must order its commands after
+            // ours: publish a fence it can glWaitSync() on (sync objects are share-group state).
+            // glFlush so the fence (and the frame) actually reach the GPU queue now.
+            // Resolved here (our context is current on this thread) rather than through bluegl,
+            // whose bindings this TU does not see.
+            static PFNGLFENCESYNCPROC  pFenceSync  = (PFNGLFENCESYNCPROC)  wglGetProcAddress("glFenceSync");
+            static PFNGLDELETESYNCPROC pDeleteSync = (PFNGLDELETESYNCPROC) wglGetProcAddress("glDeleteSync");
+            GLsync fence = pFenceSync ? pFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0) : nullptr;
+            glFlush();
+            {
+                std::lock_guard<std::mutex> lock(sFrameFenceLock);
+                if (sFrameFence && pDeleteSync) pDeleteSync(sFrameFence);   // host never took the previous one
+                sFrameFence = fence;
+            }
+            if (fence) sFrameFenceCv.notify_all();
+        } else {
+            SwapBuffers(hdc);
+        }
     }
+}
+
+// Hand the most recent no-present frame's fence to the host (ownership transfers: the host must
+// glDeleteSync it after waiting). Blocks up to timeoutMs for the driver thread to reach commit() —
+// that is CPU-side command translation, not GPU completion. NULL on timeout / none pending.
+extern "C" void* filament_wgl_takeFrameFence(unsigned timeoutMs) {
+    std::unique_lock<std::mutex> lock(sFrameFenceLock);
+    if (!sFrameFence) {
+        sFrameFenceCv.wait_for(lock, std::chrono::milliseconds(timeoutMs), [] { return sFrameFence != nullptr; });
+    }
+    GLsync fence = sFrameFence;
+    sFrameFence = nullptr;
+    return (void*) fence;
 }
 
 } // namespace filament::backend
