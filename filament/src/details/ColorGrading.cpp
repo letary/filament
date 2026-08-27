@@ -122,6 +122,9 @@ struct ColorGrading::BuilderDetails {
     // Output color space
     ColorSpace outputColorSpace = Rec709-sRGB-D65;
 
+    // creator-gl patch 0018: keep display-referred values above 1.0 (HDR surfaces)
+    bool extendedRange = false;
+
     // Custom LUT
     FixedCapacityVector<float3> customLutData;
     uint8_t customLutDimension = 0;
@@ -160,6 +163,7 @@ struct ColorGrading::BuilderDetails {
                midPoint == rhs.midPoint &&
                highlightScale == rhs.highlightScale &&
                outputColorSpace == rhs.outputColorSpace &&
+               extendedRange == rhs.extendedRange &&
                customLutData == rhs.customLutData &&
                customLutDimension == rhs.customLutDimension;
     }
@@ -301,6 +305,11 @@ ColorGrading::Builder& ColorGrading::Builder::curves(
 ColorGrading::Builder& ColorGrading::Builder::outputColorSpace(
         const ColorSpace& colorSpace) noexcept {
     mImpl->outputColorSpace = colorSpace;
+    return *this;
+}
+
+ColorGrading::Builder& ColorGrading::Builder::extendedRange(bool const enabled) noexcept {
+    mImpl->extendedRange = enabled;
     return *this;
 }
 
@@ -784,6 +793,7 @@ struct FColorGrading::Config {
     mat3f  colorGradingOut;
     float3 colorGradingLuminance{};
     ColorTransform oetf;
+    bool extendedRange{};
 
     float precomputedLinear[512]{};
     float3 precomputedInR[512]{};
@@ -812,6 +822,13 @@ FColorGrading::FColorGrading(FEngine& engine, const Builder& builder) {
             && engine.features.engine.color_grading.use_1d_lut;
     mIsLDR = mIsOneDimensional && builder->toneMapper->isLDR();
 
+    // creator-gl patch 0018: values above 1.0 survive only in a float LUT with no OETF to apply
+    // (the 1D LUT is always fp16; its LDR variant clamps regardless, so an extended-range tone
+    // mapper must not report isLDR).
+    mIsHDR = builder->extendedRange &&
+            (mIsOneDimensional || builder->format == LutFormat::FLOAT) &&
+            builder->outputColorSpace.getTransferFunction() == Linear;
+
     Config config = {
         mIsOneDimensional ? 512u : builder->dimension,
         adaptationTransform(builder->whiteBalance),
@@ -819,6 +836,7 @@ FColorGrading::FColorGrading(FEngine& engine, const Builder& builder) {
         selectColorGradingTransformOut(builder->toneMapping),
         selectColorGradingLuminance(builder->toneMapping),
         selectOETF(builder->outputColorSpace),
+        mIsHDR,
     };
 
     float const expScale = builder->hasAdjustments ? std::exp2(builder->exposure) : 1.0f;
@@ -1081,8 +1099,9 @@ float4 FColorGrading::hdrColorAt(Builder const& builder, Config const& config,
     // TODO: We should convert to the output color space if we use a working color space that's not sRGB
     // TODO: Allow the user to customize the output color space
 
-    // We need to clamp for the output transfer function
-    v = saturate(v);
+    // We need to clamp for the output transfer function — unless the output is extended range
+    // (creator-gl patch 0018): the transfer function is then linear and the headroom is the point.
+    v = config.extendedRange ? max(v, 0.0f) : saturate(v);
 
     // Apply OETF
     v = config.oetf(v);

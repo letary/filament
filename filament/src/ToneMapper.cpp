@@ -1047,6 +1047,59 @@ void GenericToneMapper::setHdrMax(float const hdrMax) noexcept {
     );
 }
 
+//------------------------------------------------------------------------------
+// Extended range tone mapper (creator-gl patch 0018)
+//------------------------------------------------------------------------------
+
+namespace {
+
+// The fade window at strength 0 (only what SDR clipped is touched) and at strength 1 (nearly
+// everything above black reaches for the headroom).
+constexpr float kExtendedRangeFadeStartMin = 0.5f;
+constexpr float kExtendedRangeFadeEndMin = 2.0f;
+constexpr float kExtendedRangeFadeStartMax = 0.05f;
+constexpr float kExtendedRangeFadeEndMax = 0.6f;
+
+// The exposure k at which h·T(k·c/h) meets T(c) where the fade starts. Monotonic in k;
+// bisected in log2 over [1/16, 16].
+float solveExtendedRangeExposure(const ToneMapper& base, float const h, float const c0) noexcept {
+    if (h <= 1.0f) return 1.0f;
+    float const target = base(float3{ c0 }).y;
+    auto at = [&](float const log2k) { return h * base(float3{ c0 * std::exp2(log2k) / h }).y; };
+    float lo = -4.0f, hi = 4.0f;
+    if (at(lo) >= target) return std::exp2(lo);
+    if (at(hi) <= target) return std::exp2(hi);
+    for (int i = 0; i < 40; i++) {
+        float const mid = 0.5f * (lo + hi);
+        if (at(mid) < target) lo = mid; else hi = mid;
+    }
+    float const k = std::exp2(0.5f * (lo + hi));
+    return std::abs(k - 1.0f) < 1e-4f ? 1.0f : k;   // the identity-below-knee operators, exactly
+}
+
+} // namespace
+
+ExtendedRangeToneMapper::ExtendedRangeToneMapper(const ToneMapper* base, float const headroom,
+        float const strength, float const paperWhite) noexcept
+        : mBase(base),
+          mHeadroom(headroom),
+          // paper white cannot exceed the peak; below a headroom of 1 there is nothing to scale into
+          mPaperWhite(headroom > 1.0f ? std::min(std::max(paperWhite, 1.0f), headroom) : 1.0f),
+          mRange(mHeadroom / mPaperWhite),
+          mFadeStart(mix(kExtendedRangeFadeStartMin, kExtendedRangeFadeStartMax, saturate(strength))),
+          mFadeEnd(mix(kExtendedRangeFadeEndMin, kExtendedRangeFadeEndMax, saturate(strength))),
+          mExposure(solveExtendedRangeExposure(*base, mRange, mFadeStart)) {
+}
+
+ExtendedRangeToneMapper::~ExtendedRangeToneMapper() noexcept = default;
+
+float3 ExtendedRangeToneMapper::operator()(float3 const c) const noexcept {
+    float3 const sdr = min((*mBase)(c), 1.0f);   // filmic overshoots 1 (the SDR LUT clips it)
+    if (mRange <= 1.0f) return sdr * mPaperWhite;   // SDR (headroom <= 1), or paper white at the peak
+    float3 const extended = min(mRange * (*mBase)(c * (mExposure / mRange)), mRange);
+    return mix(sdr, extended, smoothstep(mFadeStart, mFadeEnd, max(c))) * mPaperWhite;
+}
+
 #undef DEFAULT_CONSTRUCTORS
 
 } // namespace filament

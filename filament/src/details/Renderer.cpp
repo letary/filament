@@ -843,7 +843,12 @@ void FRenderer::renderJob(DriverApi& driver, RootArenaScope& rootArenaScope, FVi
             .translucent = needsAlphaChannel,
             .outputLuminance = hasFXAA || scaled, // ignored by translucent variants (false)
             .dithering = hasDithering,
-            .ldrFormat = (hasColorGrading && (hasFXAA || scaled)) ?
+            // creator-gl patch 0018: an extended-range ColorGrading writes values above 1.0, and
+            // every pass after it (FXAA, upscale, the final blit) allocates its target in this
+            // format — an 8-bit intermediate would clip the headroom before it reaches the swap
+            // chain. mHdrTranslucent is RGBA16F with the backend's fallback already applied.
+            .ldrFormat = (hasColorGrading && colorGrading->isHDR()) ? mHdrTranslucent :
+                    (hasColorGrading && (hasFXAA || scaled)) ?
                     TextureFormat::RGBA8 : getLdrFormat(needsAlphaChannel)
     };
 

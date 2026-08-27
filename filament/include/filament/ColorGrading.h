@@ -509,6 +509,21 @@ public:
         Builder& outputColorSpace(const color::ColorSpace& colorSpace) noexcept;
 
         /**
+         * creator-gl patch 0018: extended-range (HDR display) output. When enabled, the display-
+         * referred values produced by the tone mapper are stored WITHOUT clamping to [0, 1], so an
+         * operator that maps into [0, headroom] reaches the surface intact. Only honoured together
+         * with LutFormat::FLOAT and a Linear output transfer function (a 10-bit LUT and the sRGB
+         * OETF both need [0, 1]); otherwise the LUT is clamped as usual. A View whose ColorGrading
+         * is extended-range keeps every buffer after color grading (FXAA, upscale, blit) in
+         * RGBA16F — see FRenderer. Default: false.
+         *
+         * @param enabled true to keep values above 1.0 in the LUT
+         *
+         * @return This Builder, for chaining calls
+         */
+        Builder& extendedRange(bool enabled) noexcept;
+
+        /**
          * Registers a callback to inspect or copy the generated LUT data during build().
          *
          * @param callback Function pointer invoked with the generated data and layout metadata.

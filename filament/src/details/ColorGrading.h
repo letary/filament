@@ -51,6 +51,9 @@ public:
     uint32_t getDimension() const noexcept { return mDimension; }
     bool isOneDimensional() const noexcept { return mIsOneDimensional; }
     bool isLDR() const noexcept { return mIsLDR; }
+    // creator-gl patch 0018: the LUT holds display-referred values above 1.0 (Builder::extendedRange
+    // with a float LUT and a linear output transfer function).
+    bool isHDR() const noexcept { return mIsHDR; }
 
 private:
     struct Config;
@@ -61,6 +64,7 @@ private:
     uint32_t mDimension;
     bool mIsOneDimensional;
     bool mIsLDR;
+    bool mIsHDR;
 
 #if defined(__ARM_NEON)
     static void generateDefaultLUTNeon(FEngine const& engine, void* data, Config const& config, Builder const& builder) noexcept;
