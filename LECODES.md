@@ -39,6 +39,7 @@ first published is `lecodes-1.75.1`.
 | 0008 | WGL | `SWAP_CHAIN_CONFIG_NO_PRESENT` + preferred pixel format + frame fence hand-off |
 | 0009 | Vulkan | `Texture::Builder::import()` of an external `VkImage` |
 | 0010 | Vulkan | shared-queue lock hooks + frame timeline signal + frame-skipper bypass |
+| 0012 | Vulkan | one stride of slack after every vertex buffer (AMD last-vertex fetch) |
 
 ## Adding a change
 
