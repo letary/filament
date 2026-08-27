@@ -2810,6 +2810,14 @@ void OpenGLDriver::getPlatformSync(Handle<HwSync> sh, CallbackHandler* handler,
 
 bool OpenGLDriver::isTextureFormatSupported(TextureFormat const format) {
     const auto& ext = mContext.ext;
+    // LeCodes: a compressed format is only usable if this build can NAME it. The checks below read
+    // the runtime extension string, while getInternalFormat() is compiled against whatever GL
+    // headers are in the build -- and the two disagreed for BPTC on Windows (see gl_headers.h).
+    // Saying "supported" for a format that maps to internal format 0 does not degrade, it renders
+    // garbage; falling through to the next candidate does degrade, gracefully.
+    if (isCompressedFormat(format) && getInternalFormat(format) == 0) {
+        return false;
+    }
     if (isETC2Compression(format)) {
         return ext.EXT_texture_compression_etc2 ||
                ext.WEBGL_compressed_texture_etc; // WEBGL specific, apparently contains ETC2

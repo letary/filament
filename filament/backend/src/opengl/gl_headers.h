@@ -93,6 +93,26 @@
 #endif
 
 /*
+ * LeCodes: BPTC (BC7) on desktop GL.
+ *
+ * GLUtils::getInternalFormat() spells the BPTC tokens with the _EXT suffix and guards them with
+ * `#if defined(GL_EXT_texture_compression_bptc)` -- an ES extension macro. The desktop headers
+ * bluegl ships (glcorearb.h / glext.h) define the same four values under the ARB (and core) names
+ * and never define that macro, so on Windows the block compiled out and getInternalFormat()
+ * returned 0 for BC7. isTextureFormatSupported(), meanwhile, answers from the RUNTIME extension
+ * string, where every DX11-class GPU reports bptc -- so filament said "yes, BC7 is supported" and
+ * then built the texture with internal format 0. A KTX2 transcoded to BC7 came out as garbage
+ * colour. The token values are identical, so aliasing them is the whole fix.
+ */
+#if !defined(GL_EXT_texture_compression_bptc) && defined(GL_COMPRESSED_RGBA_BPTC_UNORM_ARB)
+#   define GL_EXT_texture_compression_bptc 1
+#   define GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT_EXT   GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT_ARB
+#   define GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_EXT GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_ARB
+#   define GL_COMPRESSED_RGBA_BPTC_UNORM_EXT         GL_COMPRESSED_RGBA_BPTC_UNORM_ARB
+#   define GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM_EXT   GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM_ARB
+#endif
+
+/*
  * GLES extensions
  */
 
