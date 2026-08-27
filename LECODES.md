@@ -33,6 +33,7 @@ first published is `lecodes-1.75.1`.
 | 0002 | Metal | hold descriptor-set argument buffers strongly (hardening) |
 | 0003 | core | always commit a MaterialInstance's descriptor set |
 | 0004 | CMake | `FILAMENT_MATC_TARGET_OVERRIDE` (mobile materials on the Linux GLES host) |
+| 0005 | CMake | skip `web/filament-js` + `web/examples` on WASM |
 
 ## Adding a change
 
