@@ -779,6 +779,17 @@ public:
     bool isStencilBufferEnabled() const noexcept;
 
     /**
+     * creator-gl patch 0017: keeps the depth ("structure") buffer alive and bound to the color
+     * pass as `sampler0_structure` even when nothing else in this View needs it (no screen-space
+     * contact shadows, no fog-as-post-process). Every surface-domain material already declares
+     * that sampler, so with this on a material can read scene depth — soft particles.
+     * Off (default): the color pass gets a 1x1 dummy and the structure pass is culled unless
+     * SSAO / contact shadows / DoF ask for it.
+     */
+    void setStructureSamplingEnabled(bool enabled) noexcept;
+    bool isStructureSamplingEnabled() const noexcept;
+
+    /**
      * Sets the stereoscopic rendering options for this view.
      *
      * Currently, only one type of stereoscopic rendering is supported: side-by-side.

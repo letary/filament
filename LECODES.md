@@ -44,6 +44,7 @@ first published is `lecodes-1.75.1`.
 | 0014 | gltfio | transcode KTX2 to ASTC/BC7 before ETC2/BC3 |
 | 0015 | OpenGL | BPTC (BC7) on desktop GL: the `_EXT` tokens aliased to the ARB names bluegl's headers carry, `GL_ARB_texture_compression_bptc` counts as support (NVIDIA lists only the ARB name — every BPTC format was "unsupported": BC7 KTX2 pages fell through to ETC2 / DXT5, the BC6H HDR lightmap panicked at `Texture::Builder::build`), and `isTextureFormatSupported` never claims a compressed format `getInternalFormat` cannot name (absorbs 0026) |
 | 0016 | gltfio | anisotropic filtering on glTF textures (`setDefaultTextureAnisotropy`) |
+| 0017 | View | `setStructureSamplingEnabled` — scene depth in the color pass (soft particles, decals) |
 
 ## Adding a change
 

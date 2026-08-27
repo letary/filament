@@ -335,6 +335,14 @@ bool View::isStencilBufferEnabled() const noexcept {
     return downcast(this)->isStencilBufferEnabled();
 }
 
+void View::setStructureSamplingEnabled(bool const enabled) noexcept {
+    downcast(this)->setStructureSamplingEnabled(enabled);
+}
+
+bool View::isStructureSamplingEnabled() const noexcept {
+    return downcast(this)->isStructureSamplingEnabled();
+}
+
 void View::setStereoscopicOptions(const StereoscopicOptions& options) noexcept {
     return downcast(this)->setStereoscopicOptions(options);
 }
