@@ -74,6 +74,80 @@ struct WGLSwapChain {
 
 static PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribs = nullptr;
 
+// Create a GL 4.x context on `whdc` that shares its object namespace with `share`, returning the
+// context (or NULL) and recording in `outAttribs` the attributes that worked (reused for the worker
+// contexts). NVIDIA's WGL is strict about sharing in two ways that AMD/Intel tolerate, and both bite
+// this app because it composites Filament INTO a tgfx-owned context:
+//   1. It refuses to share a context across mismatched core/compatibility PROFILES. tgfx (which runs
+//      fine on these GPUs) creates a CORE-profile context, so to land Filament in the same share group
+//      we must also try CORE — the historical "no profile mask" request lands in a different profile.
+//   2. It can reject a share context supplied at CREATE time, yet accept the legacy wglShareLists
+//      afterward (create unshared, then share). tgfx's WGL backend uses exactly this fallback.
+// We try, in order: directly-shared (default profile, then CORE, then COMPAT) -> unshared +
+// wglShareLists (same three profiles) -> legacy wglCreateContext + wglShareLists. On AMD/Intel the very
+// first attempt (default profile, directly shared) succeeds, so their proven path is unchanged.
+static HGLRC createSharedContext(HDC whdc, HGLRC share, std::vector<int>& outAttribs, DWORD& dwError) {
+    const int profiles[3] = {
+        0,                                              // driver default (no profile mask)
+        WGL_CONTEXT_CORE_PROFILE_BIT_ARB,               // matches tgfx
+        WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB,      // last resort
+    };
+    auto makeAttribs = [](int profile, int minor) {
+        std::vector<int> a = { WGL_CONTEXT_MAJOR_VERSION_ARB, 4, WGL_CONTEXT_MINOR_VERSION_ARB, minor };
+        if (profile) { a.push_back(WGL_CONTEXT_PROFILE_MASK_ARB); a.push_back(profile); }
+        a.push_back(0);
+        return a;
+    };
+
+    // Pass 1: ask the driver for a context already sharing with `share`.
+    for (int profile : profiles) {
+        for (int minor = 5; minor >= 1; --minor) {
+            std::vector<int> a = makeAttribs(profile, minor);
+            HGLRC c = wglCreateContextAttribs(whdc, share, a.data());
+            if (c) {
+                outAttribs = std::move(a);
+                LOG(INFO) << "PlatformWGL: shared context via direct create (profile=" << profile
+                          << ", GL 4." << minor << ")";
+                return c;
+            }
+            dwError = GetLastError();
+        }
+    }
+
+    // Pass 2: create UNSHARED, then share lists. `share` may already hold objects (allowed for the
+    // source); the freshly-created context is pristine (required for the destination).
+    for (int profile : profiles) {
+        for (int minor = 5; minor >= 1; --minor) {
+            std::vector<int> a = makeAttribs(profile, minor);
+            HGLRC c = wglCreateContextAttribs(whdc, nullptr, a.data());
+            if (!c) { dwError = GetLastError(); continue; }
+            if (!share || wglShareLists(share, c)) {
+                outAttribs = std::move(a);
+                LOG(INFO) << "PlatformWGL: shared context via wglShareLists (profile=" << profile
+                          << ", GL 4." << minor << ")";
+                return c;
+            }
+            dwError = GetLastError();
+            wglDeleteContext(c);
+        }
+    }
+
+    // Pass 3: legacy context + wglShareLists (tgfx's ultimate fallback).
+    HGLRC c = wglCreateContext(whdc);
+    if (c) {
+        if (!share || wglShareLists(share, c)) {
+            outAttribs.clear();
+            LOG(INFO) << "PlatformWGL: shared context via legacy wglCreateContext + wglShareLists";
+            return c;
+        }
+        dwError = GetLastError();
+        wglDeleteContext(c);
+    } else {
+        dwError = GetLastError();
+    }
+    return NULL;
+}
+
 Driver* PlatformWGL::createDriver(void* sharedGLContext,
         const Platform::DriverConfig& driverConfig) {
     int result = 0;
@@ -123,19 +197,10 @@ Driver* PlatformWGL::createDriver(void* sharedGLContext,
     wglCreateContextAttribs =
             (PFNWGLCREATECONTEXTATTRIBSARBPROC) wglGetProcAddress("wglCreateContextAttribsARB");
 
-    // try all versions down, from GL 4.5 to 4.1
-    for (int minor = 5; minor >= 1; minor--) {
-        mAttribs = {
-                WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
-                WGL_CONTEXT_MINOR_VERSION_ARB, minor,
-                0
-        };
-        mContext = wglCreateContextAttribs(whdc, (HGLRC)sharedGLContext, mAttribs.data());
-        if (mContext) {
-            break;
-        }
-        dwError = GetLastError();
-    }
+    // Create the primary context, sharing object namespace with sharedGLContext (the host's master
+    // context). The ladder inside createSharedContext copes with strict (NVIDIA) drivers; see its
+    // comment. mAttribs records the winning attributes for the worker contexts below.
+    mContext = createSharedContext(whdc, (HGLRC)sharedGLContext, mAttribs, dwError);
 
     if (!mContext) {
         LOG(ERROR) << "wglCreateContextAttribs() failed, whdc=" << whdc;
@@ -147,10 +212,15 @@ Driver* PlatformWGL::createDriver(void* sharedGLContext,
     // as the primary context. If more shared contexts are necessary, the constant
     // SHARED_CONTEXT_NUM must be updated.
     for (int i = 0; i < SHARED_CONTEXT_NUM; ++i) {
-        HGLRC context = wglCreateContextAttribs(mWhdc, mContext, mAttribs.data());
+        std::vector<int> workerAttribs;
+        DWORD workerError = 0;
+        HGLRC context = createSharedContext(mWhdc, mContext, workerAttribs, workerError);
         if (context) {
             utils::LockGuard const lock(mAdditionalContextsLock);
             mAdditionalContexts.push_back(context);
+        } else {
+            LOG(WARNING) << "PlatformWGL: worker context " << i << " creation failed (Windows error "
+                         << workerError << ")";
         }
     }
 

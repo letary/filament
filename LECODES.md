@@ -35,6 +35,7 @@ first published is `lecodes-1.75.1`.
 | 0004 | CMake | `FILAMENT_MATC_TARGET_OVERRIDE` (mobile materials on the Linux GLES host) |
 | 0005 | CMake | skip `web/filament-js` + `web/examples` on WASM |
 | 0006 | OpenGL | `GL_POINT_SPRITE` in a compatibility context (point-sprite particles on Windows) |
+| 0007 | WGL | robust shared-context creation (NVIDIA + tgfx share group) |
 
 ## Adding a change
 
