@@ -1259,7 +1259,12 @@ void MetalDriver::terminate() {
 }
 
 ShaderModel MetalDriver::getShaderModel() const noexcept {
-#if defined(FILAMENT_IOS)
+#if defined(FILAMENT_IOS) || defined(CREATOR_MACOS_MOBILE)
+    // CREATOR_MACOS_MOBILE: the macOS port reuses the iOS (mobile, shader model
+    // 0x2) materials + uberarchive on Apple-Silicon Metal, which runs mobile MSL
+    // natively. Report MOBILE so the engine's own embedded materials and the
+    // reused .filamat are accepted. (Re-applied after the Filament 1.72.0 update
+    // reverted it — see LeCodes MacOS STATUS.md §2.)
     return ShaderModel::MOBILE;
 #else
     return ShaderModel::DESKTOP;
