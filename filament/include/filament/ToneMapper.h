@@ -18,6 +18,7 @@
 #define TNT_FILAMENT_TONEMAPPER_H
 
 #include <utils/compiler.h>
+#include <utils/FixedCapacityVector.h>
 
 #include <math/mathfwd.h>
 
@@ -360,6 +361,90 @@ struct UTILS_PUBLIC DisplayRangeToneMapper final : public ToneMapper {
     math::float3 operator()(math::float3 c) const noexcept override;
     bool isOneDimensional() const noexcept override { return false; }
     bool isLDR() const noexcept override { return false; }
+};
+
+/**
+ * creator-gl patch 0018: extends any SDR tone mapper to a display with headroom above SDR white
+ * (an extended-range float surface — macOS/iOS EDR). Output is display-referred linear with
+ * 1.0 = SDR white and values up to `headroom`; pair it with ColorGrading::Builder::extendedRange().
+ *
+ * The base curve T is kept verbatim up to 0.5 (an app's look survives), and the same curve
+ * stretched to the headroom, h·T(k·c/h), fades in over 0.5..2.0 of the brightest channel: a
+ * diffuse white surface stays about at SDR white and only what SDR clipped (sky, emissives,
+ * speculars) climbs into the headroom. k is the exposure at which the stretched curve meets T
+ * where the fade starts, solved once per headroom. headroom <= 1 reproduces T exactly (clipped
+ * at 1.0). The blend weight is a scalar per pixel, so hue behaviour is the base operator's and a
+ * 3D operator stays 3D.
+ *
+ * `paperWhite` then scales the whole result: it is where the base curve's white (diffuse white,
+ * the UI's white) lands, as a multiple of SDR white — the "HDR brightness" of a console game's
+ * calibration screen, where paper white sits at ~200 nits against SDR's ~100. The stretched curve
+ * is built for the range that remains above it (headroom / paperWhite), so the display peak is
+ * still reached, by proportionally less. 1 (the default) keeps the base curve's white at SDR
+ * white; a paperWhite at or above the headroom is plain SDR scaled to the peak.
+ *
+ * A custom 3D LUT (the `.cube` a grading tool exports) is defined on display-referred, sRGB-encoded
+ * 0..1. ColorGrading applies Builder::customLut() after the OETF, to the final value, so under
+ * extended range every value above SDR white would clamp into the LUT's white corner — the builder's
+ * LUT is therefore ignored there, and this mapper takes it instead: T becomes the base curve as the
+ * SDR path shows it, T'(c) = EOTF_sRGB(lut(OETF_sRGB(saturate(T(c))))) (the clamp, the OETF and the
+ * LUT in the SDR path's order, on T converted from Rec.2020 to sRGB and back). T' is what is kept,
+ * what is stretched and what the exposure is solved on, so both parts carry the look.
+ *
+ * The base operator must outlive this object; the LUT is copied.
+ */
+struct UTILS_PUBLIC ExtendedRangeToneMapper final : public ToneMapper {
+    /**
+     * @param base       the SDR operator to extend; must outlive this object
+     * @param headroom   display peak as a multiple of SDR white (<= 1 reproduces `base` exactly)
+     * @param strength   how much of the tonal range reaches for the headroom, 0..1. 0 touches only
+     *                   what SDR clipped (the scene keeps its SDR look and just stops clipping);
+     *                   1 lifts nearly everything above black, so the whole image climbs toward the
+     *                   display peak. It moves the fade window: 0 fades in over scene 0.5..2.0,
+     *                   1 over 0.05..0.6. Mid-range values trade "faithful" for "punchy" —
+     *                   a sunlit exterior wants more of this than a dim interior.
+     * @param paperWhite where the base curve's white lands, as a multiple of SDR white, 1..headroom
+     *                   (clamped). The whole output is scaled by it; the stretched curve then covers
+     *                   headroom / paperWhite. 1 = the base curve's white stays at SDR white.
+     * @param lut        optional custom 3D LUT, Builder::customLut()'s layout (lutDimension³
+     *                   entries, red varying fastest); copied. nullptr = none.
+     * @param lutDimension the LUT's edge; 0 = none
+     */
+    ExtendedRangeToneMapper(const ToneMapper* base, float headroom, float strength = 0.0f,
+            float paperWhite = 1.0f, const math::float3* lut = nullptr,
+            uint8_t lutDimension = 0) noexcept;
+    ~ExtendedRangeToneMapper() noexcept override;
+
+    using ToneMapper::operator();
+    math::float3 operator()(math::float3 c) const noexcept override;
+    // a 3D LUT mixes the channels
+    bool isOneDimensional() const noexcept override {
+        return mLutDimension == 0 && mBase->isOneDimensional();
+    }
+    bool isLDR() const noexcept override { return false; }
+
+    float getHeadroom() const noexcept { return mHeadroom; }
+    /** The paper white actually applied (clamped to 1..headroom). */
+    float getPaperWhite() const noexcept { return mPaperWhite; }
+    /** The range the stretched curve covers above paper white: headroom / paperWhite. */
+    float getRange() const noexcept { return mRange; }
+    /** Exposure applied to the stretched curve; 1.0 for operators that are the identity below their knee. */
+    float getExposure() const noexcept { return mExposure; }
+    float getFadeStart() const noexcept { return mFadeStart; }
+    float getFadeEnd() const noexcept { return mFadeEnd; }
+
+private:
+    math::float3 graded(math::float3 c) const noexcept;
+
+    const ToneMapper* mBase;
+    float mHeadroom;
+    float mPaperWhite;
+    float mRange;
+    float mFadeStart;
+    float mFadeEnd;
+    float mExposure;
+    utils::FixedCapacityVector<math::float3> mLut;
+    uint8_t mLutDimension;
 };
 
 } // namespace filament

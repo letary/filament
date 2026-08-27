@@ -45,6 +45,7 @@ first published is `lecodes-1.75.1`.
 | 0015 | OpenGL | BPTC (BC7) on desktop GL: the `_EXT` tokens aliased to the ARB names bluegl's headers carry, `GL_ARB_texture_compression_bptc` counts as support (NVIDIA lists only the ARB name — every BPTC format was "unsupported": BC7 KTX2 pages fell through to ETC2 / DXT5, the BC6H HDR lightmap panicked at `Texture::Builder::build`), and `isTextureFormatSupported` never claims a compressed format `getInternalFormat` cannot name (absorbs 0026) |
 | 0016 | gltfio | anisotropic filtering on glTF textures (`setDefaultTextureAnisotropy`) |
 | 0017 | View | `setStructureSamplingEnabled` — scene depth in the color pass (soft particles, decals) |
+| 0018 | ColorGrading | extended-range (HDR display) output + `ExtendedRangeToneMapper`. Under extended range the custom LUT grades the mapper's BASE curve, before the stretch (`ExtendedRangeToneMapper(…, lut, lutDimension)`; the builder's `customLut` is skipped there): the `.cube` is defined on sRGB-encoded 0..1, and applied after the OETF to the extended value it clamped every highlight above SDR white into its white corner. The macOS desktop host's EDR scene layer (direct mode on Metal) is the consumer |
 
 ## Adding a change
 

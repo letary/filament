@@ -18,12 +18,14 @@
 #include <filament/ToneMapper.h>
 
 #include "ColorSpaceUtils.h"
+#include "details/ColorGrading.h"
 
 #include <math/half.h>
 #include <math/scalar.h>
 #include <math/mat3.h>
 #include <math/vec3.h>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <new>
@@ -1045,6 +1047,78 @@ void GenericToneMapper::setHdrMax(float const hdrMax) noexcept {
             mOptions->midGrayOut,
             hdrMax
     );
+}
+
+//------------------------------------------------------------------------------
+// Extended range tone mapper (creator-gl patch 0018)
+//------------------------------------------------------------------------------
+
+namespace {
+
+// The fade window at strength 0 (only what SDR clipped is touched) and at strength 1 (nearly
+// everything above black reaches for the headroom).
+constexpr float kExtendedRangeFadeStartMin = 0.5f;
+constexpr float kExtendedRangeFadeEndMin = 2.0f;
+constexpr float kExtendedRangeFadeStartMax = 0.05f;
+constexpr float kExtendedRangeFadeEndMax = 0.6f;
+
+// The exposure k at which h·T'(k·c/h) meets T'(c) where the fade starts, T' the graded base curve
+// (with a LUT the meeting point moves with the look). Monotonic in k; bisected in log2 over
+// [1/16, 16].
+template<typename Curve>
+float solveExtendedRangeExposure(Curve const& curve, float const h, float const c0) noexcept {
+    if (h <= 1.0f) return 1.0f;
+    float const target = curve(float3{ c0 }).y;
+    auto at = [&](float const log2k) { return h * curve(float3{ c0 * std::exp2(log2k) / h }).y; };
+    float lo = -4.0f, hi = 4.0f;
+    if (at(lo) >= target) return std::exp2(lo);
+    if (at(hi) <= target) return std::exp2(hi);
+    for (int i = 0; i < 40; i++) {
+        float const mid = 0.5f * (lo + hi);
+        if (at(mid) < target) lo = mid; else hi = mid;
+    }
+    float const k = std::exp2(0.5f * (lo + hi));
+    return std::abs(k - 1.0f) < 1e-4f ? 1.0f : k;   // the identity-below-knee operators, exactly
+}
+
+} // namespace
+
+ExtendedRangeToneMapper::ExtendedRangeToneMapper(const ToneMapper* base, float const headroom,
+        float const strength, float const paperWhite, const float3* lut,
+        uint8_t const lutDimension) noexcept
+        : mBase(base),
+          mHeadroom(headroom),
+          // paper white cannot exceed the peak; below a headroom of 1 there is nothing to scale into
+          mPaperWhite(headroom > 1.0f ? std::min(std::max(paperWhite, 1.0f), headroom) : 1.0f),
+          mRange(mHeadroom / mPaperWhite),
+          mFadeStart(mix(kExtendedRangeFadeStartMin, kExtendedRangeFadeStartMax, saturate(strength))),
+          mFadeEnd(mix(kExtendedRangeFadeEndMin, kExtendedRangeFadeEndMax, saturate(strength))),
+          mExposure(1.0f),
+          mLut(lut != nullptr && lutDimension > 0 ? size_t(lutDimension) * lutDimension * lutDimension : 0),
+          mLutDimension(lut != nullptr ? lutDimension : 0) {
+    std::copy_n(lut, mLut.size(), mLut.begin());
+    mExposure = solveExtendedRangeExposure(
+            [this](float3 const c) { return graded(c); }, mRange, mFadeStart);
+}
+
+ExtendedRangeToneMapper::~ExtendedRangeToneMapper() noexcept = default;
+
+// The base curve as the SDR path shows it: clipped at SDR white, and with a custom LUT, graded on
+// its sRGB encoding (ColorGrading's clamp, OETF and LUT, in that order) and decoded back to the
+// linear Rec.2020 every ToneMapper speaks — ColorGrading converts to the output space after the
+// mapper.
+float3 ExtendedRangeToneMapper::graded(float3 const c) const noexcept {
+    float3 const t = (*mBase)(c);
+    if (mLutDimension == 0) return min(t, 1.0f);   // filmic overshoots 1 (the SDR LUT clips it)
+    float3 const encoded = OETF_sRGB(saturate(Rec2020_to_sRGB * t));
+    return sRGB_to_Rec2020 * EOTF_sRGB(applyCustomLut(encoded, mLut.data(), mLutDimension));
+}
+
+float3 ExtendedRangeToneMapper::operator()(float3 const c) const noexcept {
+    float3 const sdr = graded(c);
+    if (mRange <= 1.0f) return sdr * mPaperWhite;   // SDR (headroom <= 1), or paper white at the peak
+    float3 const extended = min(mRange * graded(c * (mExposure / mRange)), mRange);
+    return mix(sdr, extended, smoothstep(mFadeStart, mFadeEnd, max(c))) * mPaperWhite;
 }
 
 #undef DEFAULT_CONSTRUCTORS
