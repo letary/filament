@@ -46,12 +46,156 @@
 #include <utils/Panic.h>
 
 #include <chrono>
+#include <atomic>
+#include <condition_variable>
 #include <mutex>
 #ifndef NDEBUG
 #include <set>  // For VulkanDriver::debugCommandBegin
 #endif
 
 using namespace bluevk;
+
+// ---- creator-gl patch 0010: shared-queue lock hooks + per-frame timeline signal ---------------
+// The desktop Vulkan host runs Filament's backend thread and the tgfx compositor on ONE VkQueue.
+// vkQueueSubmit/Present/WaitIdle are externally synchronized, so both libraries take the host's
+// lock around them (fvkqueue). For ordering without a CPU wait, commit() appends an empty submission
+// that signals a timeline semaphore (value = frame counter, after everything submitted before it on
+// the queue); the host takes the value (filament_vk_takeFrameSignal, blocks only until the driver
+// thread has SUBMITTED) and makes the compositor's submission wait on it GPU-side.
+namespace filament::backend::fvkqueue {
+namespace {
+void (*sLock)(void*) = nullptr;
+void (*sUnlock)(void*) = nullptr;
+void* sUser = nullptr;
+}
+void lock() noexcept { if (sLock) sLock(sUser); }
+void unlock() noexcept { if (sUnlock) sUnlock(sUser); }
+} // namespace filament::backend::fvkqueue
+
+namespace {
+std::mutex sFrameSignalMutex;
+std::condition_variable sFrameSignalCv;
+VkDevice sFrameSignalDevice = VK_NULL_HANDLE;      // set by the driver ctor (one engine per process)
+VkSemaphore sFrameSignalSem = VK_NULL_HANDLE;      // timeline, created lazily on first request
+uint64_t sFrameSignalValue = 0;                    // value published by the last commit()
+std::atomic<uint64_t> sFrameSignalCounter{0};      // per-submission counter (VulkanCommands::submit)
+bool sFrameSignalPending = false;                  // a commit happened since the last take
+std::atomic<bool> sFrameSignalEnabled{false};
+} // namespace
+
+uint64_t filament::backend::fvkqueue::frameSignalAcquire(uint64_t* value) noexcept {
+    if (!sFrameSignalEnabled.load(std::memory_order_acquire)) return 0;
+    *value = ++sFrameSignalCounter;
+    return (uint64_t) sFrameSignalSem;
+}
+
+extern "C" void filament_vk_setQueueLock(void (*lock)(void*), void (*unlock)(void*), void* user) {
+    filament::backend::fvkqueue::sLock = lock;
+    filament::backend::fvkqueue::sUnlock = unlock;
+    filament::backend::fvkqueue::sUser = user;
+}
+
+// The timeline VkSemaphore commit() signals, as uint64 (VK_NULL_HANDLE = unavailable: no engine yet,
+// or the device lacks timelineSemaphore). Created on first call; destroyed with the driver.
+extern "C" uint64_t filament_vk_frameSignalSemaphore() {
+    std::lock_guard<std::mutex> const lock(sFrameSignalMutex);
+    if (sFrameSignalDevice == VK_NULL_HANDLE || !filament::backend::gFvkTimelineSemaphore) return 0;
+    if (sFrameSignalSem == VK_NULL_HANDLE) {
+        VkSemaphoreTypeCreateInfoKHR const typeInfo = {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO_KHR,
+            .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE_KHR,
+            .initialValue = 0,
+        };
+        VkSemaphoreCreateInfo const createInfo = {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+            .pNext = &typeInfo,
+        };
+        if (vkCreateSemaphore(sFrameSignalDevice, &createInfo, nullptr, &sFrameSignalSem) != VK_SUCCESS) {
+            sFrameSignalSem = VK_NULL_HANDLE;
+            return 0;
+        }
+        sFrameSignalValue = 0;
+        sFrameSignalCounter = 0;
+        sFrameSignalPending = false;
+        // Sanity: a timeline semaphore at 0 must TIME OUT waiting for 1; a binary one (feature silently
+        // missing) returns garbage/SUCCESS — then don't use it (the host falls back to the CPU wait).
+        uint64_t const probe = 1;
+        VkSemaphoreWaitInfoKHR const probeInfo = {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO_KHR,
+            .semaphoreCount = 1,
+            .pSemaphores = &sFrameSignalSem,
+            .pValues = &probe,
+        };
+        auto const waitFn = vkWaitSemaphoresKHR ? vkWaitSemaphoresKHR : vkWaitSemaphores;
+        VkResult const probeResult = waitFn ? waitFn(sFrameSignalDevice, &probeInfo, 0) : VK_ERROR_UNKNOWN;
+        if (probeResult != VK_TIMEOUT) {
+            printf("[filament-vk] frame-signal semaphore is not a working timeline (probe=%d) - disabled\n",
+                    (int) probeResult);
+            fflush(stdout);
+            vkDestroySemaphore(sFrameSignalDevice, sFrameSignalSem, nullptr);
+            sFrameSignalSem = VK_NULL_HANDLE;
+            return 0;
+        }
+        sFrameSignalEnabled.store(true, std::memory_order_release);
+    }
+    return (uint64_t) sFrameSignalSem;
+}
+
+// Blocks up to timeoutMs for the driver thread to reach commit() since the previous take, then
+// returns the value that commit signaled. false on timeout (stalled backend) or when disabled.
+extern "C" bool filament_vk_takeFrameSignal(unsigned timeoutMs, uint64_t* value) {
+    std::unique_lock<std::mutex> lock(sFrameSignalMutex);
+    if (!sFrameSignalEnabled.load()) return false;
+    if (!sFrameSignalPending) {
+        sFrameSignalCv.wait_for(lock, std::chrono::milliseconds(timeoutMs),
+                [] { return sFrameSignalPending; });
+    }
+    if (!sFrameSignalPending) return false;
+    sFrameSignalPending = false;
+    *value = sFrameSignalValue;
+    return true;
+}
+// Host-side pacing: block (no spin — the driver parks the thread) until the frame timeline reached
+// `value`, i.e. that frame's GPU work is complete. Not a queue operation: no lock. false on timeout
+// or when the signal is unavailable.
+extern "C" bool filament_vk_waitFrameSignal(uint64_t value, uint64_t timeoutNs) {
+    VkSemaphore sem;
+    {
+        std::lock_guard<std::mutex> const lock(sFrameSignalMutex);
+        if (!sFrameSignalEnabled.load() || sFrameSignalDevice == VK_NULL_HANDLE) return false;
+        sem = sFrameSignalSem;
+    }
+    VkSemaphoreWaitInfoKHR const waitInfo = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO_KHR,
+        .semaphoreCount = 1,
+        .pSemaphores = &sem,
+        .pValues = &value,
+    };
+    auto const waitFn = vkWaitSemaphoresKHR ? vkWaitSemaphoresKHR : vkWaitSemaphores;
+    if (!waitFn) return false;
+    return waitFn(sFrameSignalDevice, &waitInfo, timeoutNs) == VK_SUCCESS;
+}
+// Diagnostics: the timeline's completed counter (GPU side) and the last published frame value.
+extern "C" uint64_t filament_vk_frameSignalCompleted() {
+    VkSemaphore sem;
+    {
+        std::lock_guard<std::mutex> const lock(sFrameSignalMutex);
+        if (!sFrameSignalEnabled.load() || sFrameSignalDevice == VK_NULL_HANDLE) return 0;
+        sem = sFrameSignalSem;
+    }
+    auto const fn = vkGetSemaphoreCounterValueKHR ? vkGetSemaphoreCounterValueKHR : vkGetSemaphoreCounterValue;
+    uint64_t value = 0;
+    if (!fn || fn(sFrameSignalDevice, sem, &value) != VK_SUCCESS) return 0;
+    return value;
+}
+extern "C" uint64_t filament_vk_frameSignalPublished() {
+    std::lock_guard<std::mutex> const lock(sFrameSignalMutex);
+    return sFrameSignalValue;
+}
+extern "C" uint64_t filament_vk_frameSignalSubmitted() {
+    return sFrameSignalCounter.load();
+}
+// ---- end creator-gl patch 0010 ------------------------------------------------------------------
 
 #if defined(__clang__)
 // Vulkan functions often immediately dereference pointers, so it's fine to pass in a pointer
@@ -357,6 +501,10 @@ VulkanDriver::VulkanDriver(VulkanPlatform* platform, VulkanContext& context,
           mStereoscopicType(driverConfig.stereoscopicType),
           mStereoscopicEyeCount(driverConfig.stereoscopicEyeCount),
           mAsynchronousMode(driverConfig.asynchronousMode) {
+    {   // creator-gl patch 0010
+        std::lock_guard<std::mutex> const lock(sFrameSignalMutex);
+        sFrameSignalDevice = mPlatform->getDevice();
+    }
 
     if (mAsynchronousMode != AsynchronousMode::NONE) {
         mJobQueue = JobQueue::create();
@@ -464,6 +612,17 @@ void VulkanDriver::terminate() {
     // Flush and wait here to make sure all queued commands are executed and resources that are tied
     // to those commands are no longer referenced.
     finish(0);
+
+    {   // creator-gl patch 0010: the queue is idle now, drop the frame-signal semaphore
+        std::lock_guard<std::mutex> const lock(sFrameSignalMutex);
+        if (sFrameSignalSem != VK_NULL_HANDLE) {
+            vkDestroySemaphore(mPlatform->getDevice(), sFrameSignalSem, nullptr);
+            sFrameSignalSem = VK_NULL_HANDLE;
+        }
+        sFrameSignalEnabled.store(false);
+        sFrameSignalPending = false;
+        sFrameSignalDevice = VK_NULL_HANDLE;
+    }
 
     mCurrentSwapChain = {};
     mDefaultRenderTarget = {};
@@ -596,6 +755,22 @@ void VulkanDriver::endFrame(uint32_t frameId) {
     FVK_PROFILE_MARKER(PROFILE_NAME_ENDFRAME);
     endCommandRecording();
     collectGarbage();
+
+    // creator-gl patch 0010: publish "this frame is submitted" — the timeline value the frame's last
+    // command buffer signals when it completes (VulkanCommands::submit); a consumer waiting on
+    // (semaphore, value) then sees the complete frame. Published HERE, after endCommandRecording():
+    // a headless swapchain's commit()/present() returns without flushing (nothing acquired), so the
+    // render pass is only submitted by this flush. (An empty signal-only submission was tried first
+    // and completed immediately — not usable as a happens-after of earlier work.)
+    if (sFrameSignalEnabled.load(std::memory_order_acquire)) {
+        uint64_t const value = sFrameSignalCounter.load();
+        {
+            std::lock_guard<std::mutex> const lock(sFrameSignalMutex);
+            sFrameSignalValue = value;
+            sFrameSignalPending = true;
+        }
+        sFrameSignalCv.notify_all();
+    }
 }
 
 void VulkanDriver::updateDescriptorSetBuffer(
@@ -671,9 +846,13 @@ void VulkanDriver::finish(int dummy) {
 
     // It's not enough to wait on the fences of the buffers submitted.  Present calls are
     // submitted to this same queue, so the more correct option is to call vkQueueWaitIdle.
-    vkQueueWaitIdle(mPlatform->getGraphicsQueue());
+    {
+        fvkqueue::Guard const queueGuard;   // creator-gl patch 0010
+        vkQueueWaitIdle(mPlatform->getGraphicsQueue());
+    }
     if (auto protectedQueue = mPlatform->getProtectedGraphicsQueue();
             UTILS_UNLIKELY(protectedQueue != VK_NULL_HANDLE)) {
+        fvkqueue::Guard const queueGuard;   // creator-gl patch 0010
         vkQueueWaitIdle(protectedQueue);
     }
 

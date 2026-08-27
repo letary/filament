@@ -187,15 +187,29 @@ fvkmemory::resource_ptr<VulkanSemaphore> VulkanCommandBuffer::submit() {
     vkEndCommandBuffer(mBuffer);
 
     VkSemaphore submissionSemaphore = mSubmission->getVkSemaphore();
+    // creator-gl patch 0010: also signal the host's frame timeline (value = submission counter).
+    uint64_t frameSignalValue = 0;
+    VkSemaphore const frameSignalSem = (VkSemaphore) fvkqueue::frameSignalAcquire(&frameSignalValue);
+    VkSemaphore const signalSemaphores[2] = { submissionSemaphore, frameSignalSem };
+    uint64_t const signalValues[2] = { 0, frameSignalValue };
+    uint64_t const waitValues[2] = { 0, 0 };   // binary waits: values ignored (capacity == StaticVector's)
+    VkTimelineSemaphoreSubmitInfoKHR const timelineInfo = {
+        .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO_KHR,
+        .waitSemaphoreValueCount = mWaitSemaphores.size(),
+        .pWaitSemaphoreValues = waitValues,
+        .signalSemaphoreValueCount = 2u,
+        .pSignalSemaphoreValues = signalValues,
+    };
     VkSubmitInfo submitInfo{
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .pNext = frameSignalSem != VK_NULL_HANDLE ? &timelineInfo : nullptr,
         .waitSemaphoreCount = mWaitSemaphores.size(),
         .pWaitSemaphores = mWaitSemaphores.data(),
         .pWaitDstStageMask = mWaitSemaphoreStages.data(),
         .commandBufferCount = 1u,
         .pCommandBuffers = &mBuffer,
-        .signalSemaphoreCount = 1u,
-        .pSignalSemaphores = &submissionSemaphore,
+        .signalSemaphoreCount = frameSignalSem != VK_NULL_HANDLE ? 2u : 1u,
+        .pSignalSemaphores = signalSemaphores,
     };
     // add submit protection if needed
     VkProtectedSubmitInfo protectedSubmitInfo{
@@ -204,6 +218,7 @@ fvkmemory::resource_ptr<VulkanSemaphore> VulkanCommandBuffer::submit() {
     };
 
     if (isProtected) {
+        protectedSubmitInfo.pNext = const_cast<void*>(submitInfo.pNext);   // keep the timeline chained
         submitInfo.pNext = &protectedSubmitInfo;
     }
 
@@ -220,8 +235,11 @@ fvkmemory::resource_ptr<VulkanSemaphore> VulkanCommandBuffer::submit() {
              << " fence=" << mFence;
 #endif
 
-    UTILS_UNUSED_IN_RELEASE VkResult result =
-        vkQueueSubmit(mQueue, 1, &submitInfo, getVkFence());
+    UTILS_UNUSED_IN_RELEASE VkResult result;
+    {
+        fvkqueue::Guard const queueGuard;   // creator-gl patch 0010
+        result = vkQueueSubmit(mQueue, 1, &submitInfo, getVkFence());
+    }
     mFenceStatus->markSubmitted();
 
 #if FVK_ENABLED(FVK_DEBUG_COMMAND_BUFFER)

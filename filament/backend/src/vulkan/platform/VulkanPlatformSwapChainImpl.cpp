@@ -338,7 +338,11 @@ VkResult VulkanPlatformSurfaceSwapChain::present(uint32_t index, VkSemaphore fin
             .pSwapchains = &mSwapchain,
             .pImageIndices = &currentIndex,
     };
-    VkResult result = vkQueuePresentKHR(mQueue, &presentInfo);
+    VkResult result;
+    {
+        fvkqueue::Guard const queueGuard;   // creator-gl patch 0010
+        result = vkQueuePresentKHR(mQueue, &presentInfo);
+    }
 
     // On Android Q and above, a suboptimal surface is always reported after screen rotation:
     // https://android-developers.googleblog.com/2020/02/handling-device-orientation-efficiently.html
@@ -449,7 +453,10 @@ void VulkanPlatformSurfaceSwapChain::destroy() {
     // the queue to be idle. The hope is that this only happens on resize, where performance
     // degradation is less obvious (until, of course, people complain about lag when rotating their
     // phone). If necessary, we can revisit and implement the workaround [1].
-    vkQueueWaitIdle(mQueue);
+    {
+        fvkqueue::Guard const queueGuard;   // creator-gl patch 0010
+        vkQueueWaitIdle(mQueue);
+    }
 
     VulkanPlatformSwapChainBase::destroy();
 

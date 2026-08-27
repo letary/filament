@@ -352,7 +352,10 @@ void VulkanReadPixels::run(fvkmemory::resource_ptr<VulkanTexture> srcTexture, ui
             .signalSemaphoreCount = 0,
             .pSignalSemaphores = VK_NULL_HANDLE,
     };
-    vkQueueSubmit(queue, 1, &submitInfo, readCompleteFence);
+    {
+        fvkqueue::Guard const queueGuard;   // creator-gl patch 0010
+        vkQueueSubmit(queue, 1, &submitInfo, readCompleteFence);
+    }
 
     auto* const pUserBuffer = new PixelBufferDescriptor(std::move(pbd));
     auto cleanPbdFunc = [pUserBuffer, readCompleteFunc]() {

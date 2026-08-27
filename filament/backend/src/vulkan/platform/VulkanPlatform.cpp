@@ -37,6 +37,8 @@ using namespace bluevk;
 
 namespace filament::backend {
 
+bool gFvkTimelineSemaphore = false;   // creator-gl patch 0010
+
 namespace {
 
 constexpr uint32_t INVALID_VK_INDEX = 0xFFFFFFFF;
@@ -238,6 +240,10 @@ ExtensionSet getDeviceExtensions(VkPhysicalDevice device, bool enableDebugUtils 
         VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
 
         VK_KHR_GLOBAL_PRIORITY_EXTENSION_NAME,
+
+        // creator-gl patch 0010: the per-frame signal a host compositor waits on (core in 1.2, but
+        // the instance is 1.1 — go through the extension).
+        VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
 
 #if FVK_ENABLED(FVK_DEBUG_SHADER_MODULE)
         VK_EXT_PIPELINE_CREATION_FEEDBACK_EXTENSION_NAME,
@@ -1194,6 +1200,28 @@ void VulkanPlatform::createLogicalDeviceAndQueues(const ExtensionSet& deviceExte
     };
     if (requiresGpuPriority) {
         chainStruct(&deviceCreateInfo, &globalPriority);
+    }
+
+    // creator-gl patch 0010: timeline semaphores (filament_vk_frameSignalSemaphore).
+    VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timelineSemaphore = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR,
+        .timelineSemaphore = VK_TRUE,
+    };
+    gFvkTimelineSemaphore = false;
+    if (setContains(deviceExtensions, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME) &&
+            vkGetPhysicalDeviceFeatures2) {
+        VkPhysicalDeviceTimelineSemaphoreFeaturesKHR query = {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR,
+        };
+        VkPhysicalDeviceFeatures2 features2 = {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+            .pNext = &query,
+        };
+        vkGetPhysicalDeviceFeatures2(mImpl->mPhysicalDevice, &features2);
+        if (query.timelineSemaphore == VK_TRUE) {
+            chainStruct(&deviceCreateInfo, &timelineSemaphore);
+            gFvkTimelineSemaphore = true;
+        }
     }
 
     mImpl->mDevice = createVkDevice(deviceCreateInfo);

@@ -222,4 +222,25 @@ static_assert(FVK_MAX_PIPELINE_AGE >= FVK_MAX_COMMAND_BUFFERS);
 // when using RenderDoc the application will crash or will fail to do a capture.
 constexpr static const int FVK_RENDERDOC_CAPTURE_MODE = false;
 
+// creator-gl patch 0010: a host that shares this engine's VkQueue with another producer (the desktop
+// tgfx compositor) installs lock/unlock hooks via filament_vk_setQueueLock(); every vkQueueSubmit /
+// vkQueuePresentKHR / vkQueueWaitIdle in the backend runs under fvkqueue::Guard (no-op when unset).
+// gFvkTimelineSemaphore reports whether the device was created with timelineSemaphore enabled.
+namespace filament::backend {
+extern bool gFvkTimelineSemaphore;
+namespace fvkqueue {
+void lock() noexcept;
+void unlock() noexcept;
+// The frame-signal timeline semaphore every command-buffer submission additionally signals with a
+// monotonically increasing value (VK_NULL_HANDLE = disabled; then *value is untouched).
+uint64_t frameSignalAcquire(uint64_t* value) noexcept;   // VkSemaphore as uint64 (no vulkan.h here)
+struct Guard {
+    Guard() noexcept { lock(); }
+    ~Guard() noexcept { unlock(); }
+    Guard(Guard const&) = delete;
+    Guard& operator=(Guard const&) = delete;
+};
+} // namespace fvkqueue
+} // namespace filament::backend
+
 #endif
