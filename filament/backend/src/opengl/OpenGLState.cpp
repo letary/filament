@@ -123,6 +123,23 @@ void OpenGLState::setDefaultState() noexcept {
 #ifdef BACKEND_OPENGL_VERSION_GL
     glEnable(GL_PROGRAM_POINT_SIZE);
     enable(GL_PROGRAM_POINT_SIZE);
+
+    // (creator-gl patch) …and neither is POINT_SPRITE, which in a COMPATIBILITY-profile context is
+    // what makes `gl_PointCoord` defined at all. A core-profile context always rasterizes points as
+    // sprites, so upstream never needs this; but PlatformWGL asks for the driver's DEFAULT profile
+    // first (see createSharedContext) and AMD/Intel hand back compatibility, where `gl_PointCoord`
+    // reads a constant (0,0) — every point-sprite material then samples one texel and any radial
+    // falloff collapses to alpha 0, i.e. particles are invisible with no GL error anywhere.
+    // Guarded on the profile mask because the enum is not accepted in core (GL_INVALID_ENUM).
+    // POINT_SPRITE was REMOVED from core GL, so bluegl's glcorearb.h doesn't declare it — spell the
+    // enum out rather than #ifdef'ing on a name that can never be defined here (that silently
+    // compiles the fix away).
+    constexpr GLenum kPointSprite = 0x8861; // GL_POINT_SPRITE (compatibility profile only)
+    GLint profileMask = 0;
+    glGetIntegerv(GL_CONTEXT_PROFILE_MASK, &profileMask);
+    if (profileMask & GL_CONTEXT_COMPATIBILITY_PROFILE_BIT) {
+        glEnable(kPointSprite);
+    }
 #endif
 
 #ifdef GL_ARB_seamless_cube_map
