@@ -28,6 +28,12 @@
 
 #include <stddef.h>
 
+// creator-gl patch 0010: a host that paces frames itself (Vulkan desktop: waits on the frame timeline
+// before submitting) can bypass the skipper, which otherwise caps the pipeline at one frame in flight
+// beyond the executing one (its "2 frames ago" fence rides the NEXT frame's command buffer). Default off.
+static bool sFrameSkipperBypass = false;
+extern "C" void filament_setFrameSkipperBypass(bool bypass) { sFrameSkipperBypass = bypass; }
+
 namespace filament {
 
 using namespace utils;
@@ -51,6 +57,9 @@ bool FrameSkipper::shouldRenderFrame(DriverApi& driver) const noexcept {
 
     if (UTILS_UNLIKELY(mFrameToSkip)) {
         return false;
+    }
+    if (UTILS_UNLIKELY(sFrameSkipperBypass)) {   // creator-gl patch 0010
+        return true;
     }
 
     auto& fences = mDelayedFences;
