@@ -42,6 +42,7 @@ first published is `lecodes-1.75.1`.
 | 0012 | Vulkan | one stride of slack after every vertex buffer (AMD last-vertex fetch) |
 | 0013 | gltfio | bone-matrix flush without building an `Animator` (lazy animator) |
 | 0014 | gltfio | transcode KTX2 to ASTC/BC7 before ETC2/BC3 |
+| 0015 | OpenGL | BPTC (BC7) on desktop GL: the `_EXT` tokens aliased to the ARB names bluegl's headers carry, `GL_ARB_texture_compression_bptc` counts as support (NVIDIA lists only the ARB name — every BPTC format was "unsupported": BC7 KTX2 pages fell through to ETC2 / DXT5, the BC6H HDR lightmap panicked at `Texture::Builder::build`), and `isTextureFormatSupported` never claims a compressed format `getInternalFormat` cannot name (absorbs 0026) |
 
 ## Adding a change
 

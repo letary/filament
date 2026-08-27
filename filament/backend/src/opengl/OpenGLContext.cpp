@@ -753,7 +753,10 @@ void OpenGLContext::initExtensionsGL(Extensions* ext, GLint major, GLint minor) 
     ext->EXT_multisampled_render_to_texture = false;
     ext->EXT_multisampled_render_to_texture2 = false;
     ext->EXT_shader_framebuffer_fetch = exts.has("GL_EXT_shader_framebuffer_fetch"sv);
-    ext->EXT_texture_compression_bptc = exts.has("GL_EXT_texture_compression_bptc"sv);
+    // LeCodes: desktop drivers report the ARB name (NVIDIA lists only that one); the EXT spelling is
+    // the ES extension. Without the ARB check every BPTC format — BC7 for the transcoded KTX2 pages,
+    // BC6H for the HDR lightmap — was "unsupported" on desktop GL and fell through to ETC2 / DXT5.
+    ext->EXT_texture_compression_bptc = exts.has("GL_EXT_texture_compression_bptc"sv) || exts.has("GL_ARB_texture_compression_bptc"sv);
     ext->EXT_texture_compression_etc2 = exts.has("GL_ARB_ES3_compatibility"sv);
     ext->EXT_texture_compression_rgtc = exts.has("GL_EXT_texture_compression_rgtc"sv);
     ext->EXT_texture_compression_s3tc = exts.has("GL_EXT_texture_compression_s3tc"sv);
