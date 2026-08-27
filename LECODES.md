@@ -41,6 +41,7 @@ first published is `lecodes-1.75.1`.
 | 0010 | Vulkan | shared-queue lock hooks + frame timeline signal + frame-skipper bypass |
 | 0012 | Vulkan | one stride of slack after every vertex buffer (AMD last-vertex fetch) |
 | 0013 | gltfio | bone-matrix flush without building an `Animator` (lazy animator) |
+| 0014 | gltfio | transcode KTX2 to ASTC/BC7 before ETC2/BC3 |
 
 ## Adding a change
 
