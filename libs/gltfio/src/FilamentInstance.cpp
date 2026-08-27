@@ -42,8 +42,44 @@ FFilamentInstance::~FFilamentInstance() {
 }
 
 Animator* FFilamentInstance::getAnimator() const noexcept {
+    // creator-gl patch 0013: build it HERE, on demand. AssetLoader and ResourceLoader used to build
+    // one for every instance at load time, so every asset paid for the Animator's copy of all its
+    // animation curves whether or not anything played them. Nothing else in the class needs it.
+    const_cast<FFilamentInstance*>(this)->createAnimator();
     assert_invariant(mAnimator);
     return mAnimator;
+}
+
+// creator-gl patch 0013: the skinning flush lifted out of AnimatorImpl::updateBoneMatrices — same
+// math, no Animator. See the comment on FilamentInstance::updateBoneMatrices.
+void FFilamentInstance::updateBoneMatrices() {
+    assert_invariant(mSkins.size() == mOwner->mSkins.size());
+    RenderableManager& rm = mOwner->mEngine->getRenderableManager();
+    TransformManager& tm = mOwner->mEngine->getTransformManager();
+    size_t skinIndex = 0;
+    for (const auto& skin : mSkins) {
+        const auto& assetSkin = mOwner->mSkins[skinIndex++];
+        const size_t njoints = skin.joints.size();
+        mBoneMatrices.resize(njoints);
+        for (Entity entity : skin.targets) {
+            auto renderable = rm.getInstance(entity);
+            if (!renderable) {
+                continue;
+            }
+            mat4 inverseGlobalTransform;
+            auto xformable = tm.getInstance(entity);
+            if (xformable) {
+                inverseGlobalTransform = inverse(tm.getWorldTransformAccurate(xformable));
+            }
+            for (size_t boneIndex = 0; boneIndex < njoints; ++boneIndex) {
+                TransformManager::Instance jointInstance = tm.getInstance(skin.joints[boneIndex]);
+                mBoneMatrices[boneIndex] =
+                        mat4f{ inverseGlobalTransform * tm.getWorldTransformAccurate(jointInstance) } *
+                        assetSkin.inverseBindMatrices[boneIndex];
+            }
+            rm.setBones(renderable, mBoneMatrices.data(), mBoneMatrices.size());
+        }
+    }
 }
 
 void FFilamentInstance::createAnimator() {
@@ -397,6 +433,10 @@ Entity FilamentInstance::getRoot() const noexcept {
 
 Animator* FilamentInstance::getAnimator() noexcept {
     return downcast(this)->getAnimator();
+}
+
+void FilamentInstance::updateBoneMatrices() {
+    downcast(this)->updateBoneMatrices();
 }
 
 size_t FilamentInstance::getSkinCount() const noexcept {

@@ -142,6 +142,17 @@ public:
      * Cannot be called after releaseSourceData() on the owning asset.
      * Can only be called after loadResources() or asyncBeginLoad().
      */
+    /**
+     * creator-gl patch 0013: recomputes the skinning matrices from the joints' current world
+     * transforms, WITHOUT going through Animator.
+     *
+     * This is the only part of gltfio's animation system creator-gl uses — it drives bones itself
+     * (creator-gl/src/animation.cpp). Reaching it through getAnimator() forced the Animator to be
+     * built, and its constructor copies every animation curve into its own arrays plus a
+     * std::map node per keyframe (~1.9 MB on an 8-clip Mixamo character) that nothing ever reads.
+     */
+    void updateBoneMatrices();
+
     void recomputeBoundingBoxes();
 
     /**

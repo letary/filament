@@ -462,9 +462,8 @@ FilamentInstance* FAssetLoader::createInstance(FFilamentAsset* fAsset) {
 
     importSkins(instance, srcAsset);
 
-    // Now that all entities have been created, the instance can create the animator component.
-    // Note that it may need to defer actual creation until external buffers are fully loaded.
-    instance->createAnimator();
+    // creator-gl patch 0013: the animator is NOT built here any more — FFilamentInstance::getAnimator
+    // builds it on first use, so an asset nobody animates through gltfio never pays for it.
 
     fAsset->mInstances.push_back(instance);
 

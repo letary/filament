@@ -109,8 +109,11 @@ struct FFilamentInstance : public FilamentInstance {
 
     utils::FixedCapacityVector<MaterialInstance*> mMaterialInstances;
 
+    std::vector<math::mat4f> mBoneMatrices;            // creator-gl patch 0013: per-flush scratch
+
     void createAnimator();
     Animator* getAnimator() const noexcept;
+    void updateBoneMatrices();                         // creator-gl patch 0013
     size_t getSkinCount() const noexcept;
     const char* getSkinNameAt(size_t skinIndex) const noexcept;
     size_t getJointCountAt(size_t skinIndex) const noexcept;

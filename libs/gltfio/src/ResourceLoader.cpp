@@ -810,9 +810,8 @@ bool ResourceLoader::loadResources(FFilamentAsset* asset, bool async) {
     // materials or textures will be added. Notify the dependency graph.
     asset->mDependencyGraph.commitEdges();
 
-    for (FFilamentInstance* instance : asset->mInstances) {
-        instance->createAnimator();
-    }
+    // creator-gl patch 0013: animators are built on demand (FFilamentInstance::getAnimator), not for
+    // every instance at load.
 
     return true;
 }
