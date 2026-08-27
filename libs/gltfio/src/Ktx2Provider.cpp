@@ -239,8 +239,23 @@ Ktx2Provider::Ktx2Provider(Engine* engine) : mEngine(engine) {
 #endif
     mKtxReader.reset(new ktxreader::Ktx2Reader(*engine, quiet));
 
-    mKtxReader->requestFormat(Texture::InternalFormat::ETC2_EAC_SRGBA8);
-    mKtxReader->requestFormat(Texture::InternalFormat::DXT5_SRGBA);
+    // LeCodes: ordered by QUALITY, not by how common the format is. Every entry here is 8 bits per
+    // texel, so this list costs nothing in memory or bandwidth — the only thing it changes is how
+    // much of the source survives. The old order asked for ETC2 and BC3 first, and on a desktop GPU
+    // (no ETC2 extension, S3TC everywhere) that meant every UASTC texture in every glTF landed in
+    // BC3: two endpoints and 3-bit indices per 4x4 block, which erases fine markings and flattens
+    // normal maps. ASTC and BC7 reproduce UASTC almost exactly, which is the entire reason UASTC
+    // exists. The reader skips whatever the backend does not support, so the fallbacks still apply.
+    //
+    // Both transfer functions are listed for each family: the reader matches the file's own DFD, so
+    // a LINEAR map (normal, ORM) needs the linear sibling or it falls through to the next family.
+    mKtxReader->requestFormat(Texture::InternalFormat::SRGB8_ALPHA8_ASTC_4x4);  // Apple, Quest, modern Android
+    mKtxReader->requestFormat(Texture::InternalFormat::RGBA_ASTC_4x4);
+    mKtxReader->requestFormat(Texture::InternalFormat::SRGB_ALPHA_BPTC_UNORM);  // BC7 — desktop, and WebGL2 via EXT
+    mKtxReader->requestFormat(Texture::InternalFormat::RGBA_BPTC_UNORM);
+    mKtxReader->requestFormat(Texture::InternalFormat::ETC2_EAC_SRGBA8);        // older Android GLES
+    mKtxReader->requestFormat(Texture::InternalFormat::ETC2_EAC_RGBA8);
+    mKtxReader->requestFormat(Texture::InternalFormat::DXT5_SRGBA);             // BC3 — pre-DX11 desktop
     mKtxReader->requestFormat(Texture::InternalFormat::DXT5_RGBA);
 
     // Uncompressed formats are lower priority, so they get added last.
