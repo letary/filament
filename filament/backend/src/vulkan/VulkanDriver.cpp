@@ -1035,8 +1035,30 @@ void VulkanDriver::importTextureCommon(Handle<HwTexture> th, intptr_t id,
         SamplerType target, uint8_t levels,
         TextureFormat format, uint8_t samples, uint32_t w, uint32_t h, uint32_t depth,
         TextureUsage usage, utils::ImmutableCString&& tag) {
-    // not supported in this backend
-    assert_invariant(false && "Not supported in Vulkan backend");
+    // creator-gl patch 0009: wrap an externally created VkImage (e.g. a tgfx surface rendered on the
+    // same VkDevice). `id` points at a VulkanPlatform::ImportedImage describing the image and the
+    // layout its producer left it in. The image is NOT owned (memory == VK_NULL_HANDLE skips the
+    // vkDestroyImage/vkFreeMemory in ~VulkanTextureState); the caller keeps it alive.
+    auto const* info = reinterpret_cast<VulkanPlatform::ImportedImage const*>(id);
+    FILAMENT_CHECK_PRECONDITION(info && info->image != VK_NULL_HANDLE)
+            << "importTexture: null VulkanPlatform::ImportedImage";
+    VkFormat const vkformat = fvkutils::getVkFormat(format);
+    auto texture = resource_ptr<VulkanTexture>::make(&mResourceManager, th, mContext,
+            mPlatform->getDevice(), mAllocator, &mResourceManager, &mCommands, info->image,
+            VK_NULL_HANDLE /* memory: not owned */, vkformat, VK_NULL_HANDLE /* ycbcr */,
+            VK_NULL_HANDLE, VK_NULL_HANDLE, Platform::ExternalImageHandle{},
+            levels, samples, w, h, depth, usage, mStagePool);
+    VulkanLayout current = VulkanLayout::UNDEFINED;
+    switch (info->layout) {
+        case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL: current = VulkanLayout::FRAG_READ; break;
+        case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL: current = VulkanLayout::COLOR_ATTACHMENT; break;
+        case VK_IMAGE_LAYOUT_GENERAL:                  current = VulkanLayout::STAGING; break;
+        case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:     current = VulkanLayout::TRANSFER_SRC; break;
+        case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:     current = VulkanLayout::TRANSFER_DST; break;
+        default: break;
+    }
+    texture->setLayout(texture->getPrimaryViewRange(), current);
+    texture.inc();
     mResourceManager.associateHandle(th.getId(), std::move(tag));
 }
 

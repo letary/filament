@@ -88,6 +88,13 @@ public:
      * share their vulkan context. This is specifically necessary if the client wishes to override
      * the swapchain API.
      */
+    // creator-gl patch 0009: what Texture::Builder::import(intptr_t) points at on the Vulkan backend:
+    // an externally created VkImage on this engine's VkDevice plus the layout its producer left it in.
+    struct ImportedImage {
+        VkImage image = VK_NULL_HANDLE;
+        VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    };
+
     struct VulkanSharedContext {
         VkInstance instance = VK_NULL_HANDLE;
         VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
