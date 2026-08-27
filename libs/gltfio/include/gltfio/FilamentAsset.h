@@ -56,6 +56,21 @@ class FilamentInstance;
  *
  * \todo Only the default glTF scene is loaded, other glTF scenes are ignored.
  */
+/**
+ * creator-gl patch 0016: anisotropic filtering level for every glTF texture sampler.
+ *
+ * gltfio builds its samplers in one place (FFilamentAsset::applyTextureBinding) and never set
+ * anisotropy, so every glTF texture used filament's default of 1 -- i.e. off. Grazing surfaces
+ * (a first-person weapon, a floor, a wall) then have to pick a mip for the LONG axis of their
+ * sample footprint, several levels coarser than the short axis deserves, and their markings and
+ * normal-map detail dissolve.
+ *
+ * A sampler is baked when its texture is BOUND, during resource loading, so this is a default for
+ * assets loaded from here on rather than a live switch. Set it before loading.
+ */
+UTILS_PUBLIC void setDefaultTextureAnisotropy(float level) noexcept;
+UTILS_PUBLIC float getDefaultTextureAnisotropy() noexcept;
+
 class UTILS_PUBLIC FilamentAsset {
 public:
     using Entity = utils::Entity;
