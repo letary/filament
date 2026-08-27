@@ -31,6 +31,7 @@ first published is `lecodes-1.75.1`.
 | # | Area | Change |
 |---|---|---|
 | 0002 | Metal | hold descriptor-set argument buffers strongly (hardening) |
+| 0003 | core | always commit a MaterialInstance's descriptor set |
 
 ## Adding a change
 
