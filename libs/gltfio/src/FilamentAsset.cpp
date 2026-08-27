@@ -126,6 +126,15 @@ void FFilamentAsset::addTextureBinding(MaterialInstance* materialInstance,
     }
 }
 
+// Default anisotropy for the samplers below -- what a host gets without asking. creator-gl keeps
+// the same number (globals.h) and pushes it here through setTextureAnisotropy, so this constant
+// only decides what happens before anyone sets anything; SceneOptions.anisotropy and
+// CREATOR_TEXTURE_ANISOTROPY move it after that.
+static float gDefaultTextureAnisotropy = 2.0f;
+
+void setDefaultTextureAnisotropy(float level) noexcept { gDefaultTextureAnisotropy = level; }
+float getDefaultTextureAnisotropy() noexcept { return gDefaultTextureAnisotropy; }
+
 void FFilamentAsset::applyTextureBinding(size_t assetTextureIndex, const TextureSlot& tb,
         bool addDependency) {
     const TextureInfo& info = mTextures[assetTextureIndex];
@@ -149,6 +158,14 @@ void FFilamentAsset::applyTextureBinding(size_t assetTextureIndex, const Texture
         sampler.setMagFilter(TextureSampler::MagFilter::LINEAR);
         sampler.setMinFilter(TextureSampler::MinFilter::LINEAR_MIPMAP_LINEAR);
     }
+    // LeCodes: anisotropic filtering, which gltfio never asked for (filament's default is 1, i.e.
+    // off). A first-person weapon, a floor, a wall -- anything seen at a grazing angle -- is
+    // sampled with a footprint far longer in one axis than the other, and isotropic mip selection
+    // has to pick for the LONG axis, so it fetches a mip several levels coarser than the short
+    // axis deserves. Markings and normal-map detail dissolve, and they dissolve exactly on the
+    // surfaces the player spends the most time looking at.
+    sampler.setAnisotropy(getDefaultTextureAnisotropy());
+
     tb.materialInstance->setParameter(tb.materialParameter, info.texture, sampler);
     if (addDependency) {
         mDependencyGraph.addEdge(info.texture, tb.materialInstance, tb.materialParameter);
