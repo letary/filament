@@ -689,6 +689,14 @@ else()
     set(MATC_TARGET desktop)
 endif()
 
+# creator-desktop (Linux): force the built-in material target without flipping IS_MOBILE_TARGET/
+# IS_HOST_PLATFORM (EGL-on-Linux is a desktop config that still needs bluegl + host tools). Applied
+# idempotently by packages/desktop/build.sh; no-op for every other consumer (unset).
+if (FILAMENT_MATC_TARGET_OVERRIDE)
+    set(MATC_TARGET ${FILAMENT_MATC_TARGET_OVERRIDE})
+    message(STATUS "FILAMENT_MATC_TARGET_OVERRIDE: built-in materials compiled -p ${MATC_TARGET}")
+endif()
+
 set(MATC_API_FLAGS )
 
 if (FILAMENT_SUPPORTS_OPENGL)
