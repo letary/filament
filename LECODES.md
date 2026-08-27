@@ -30,6 +30,7 @@ first published is `lecodes-1.75.1`.
 
 | # | Area | Change |
 |---|---|---|
+| 0002 | Metal | hold descriptor-set argument buffers strongly (hardening) |
 
 ## Adding a change
 

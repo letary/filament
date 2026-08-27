@@ -460,7 +460,18 @@ public:
 
 private:
     static_assert(N <= 8);
-    std::array<__weak id<MTLBuffer>, N> mBuffers = { nil };
+    // STRONG, not __weak. These slots record the argument buffer bound for each descriptor set,
+    // and beginRenderPass re-binds every slot unconditionally (invalidate() + bindBuffers()).
+    // A descriptor set can be destroyed while still recorded here -- DescriptorSet::commitSlow()
+    // destroys and re-creates the backend set on every parameter change, and UboManager::reallocate()
+    // does it for EVERY managed instance at once when the shared material UBO grows. MetalDriver::
+    // destroyDescriptorSet() clears currentDescriptorSets[] but not these slots, and the actual
+    // destruction is deferred to command-buffer completion -- so a __weak slot silently became nil
+    // and the next beginRenderPass bound nil, aborting the draw with
+    // "missing Buffer binding at index 23 for spvDescriptorSet2[0]".
+    // Holding a strong ref is also what Metal requires of a resource bound to a live encoder;
+    // worst case is one redundant bind of a stale-but-valid set, which mi->use() overwrites.
+    std::array<id<MTLBuffer>, N> mBuffers = { nil };
     std::array<NSUInteger, N> mOffsets = { 0 };
     utils::bitset8 mDirtyBuffers;
     utils::bitset8 mDirtyOffsets;
