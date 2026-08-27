@@ -36,6 +36,7 @@ first published is `lecodes-1.75.1`.
 | 0005 | CMake | skip `web/filament-js` + `web/examples` on WASM |
 | 0006 | OpenGL | `GL_POINT_SPRITE` in a compatibility context (point-sprite particles on Windows) |
 | 0007 | WGL | robust shared-context creation (NVIDIA + tgfx share group) |
+| 0008 | WGL | `SWAP_CHAIN_CONFIG_NO_PRESENT` + preferred pixel format + frame fence hand-off |
 
 ## Adding a change
 
