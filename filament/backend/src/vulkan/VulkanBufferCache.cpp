@@ -58,6 +58,17 @@ fvkmemory::resource_ptr<VulkanBuffer> VulkanBufferCache::acquire(VulkanBufferBin
         uint32_t numBytes) noexcept {
     assert_invariant(binding != VulkanBufferBinding::UNKNOWN);
 
+    // creator-gl patch 0012: every attribute of an interleaved vertex buffer is bound as its own
+    // binding with a byte offset (VulkanVertexBufferInfo: offsets 0/12/24, one stride). The bound
+    // range of the offset bindings is then not a whole number of strides, and hardware that sizes
+    // a vertex binding in strides (AMD: num_records = range / stride) treats the LAST vertex as out
+    // of bounds and fetches zeros for it — position (0,0,0), a corner collapsed to the origin on
+    // any mesh whose buffer ends exactly at the last vertex (glTF meshes, fine on GL). One stride
+    // of slack after the data keeps the last vertex in bounds; 256 covers any Filament stride.
+    if (binding == VulkanBufferBinding::VERTEX) {
+        numBytes += 256;
+    }
+
     BufferPool& bufferPool = getPool(binding);
 
     // First check if an allocation exists whose capacity is greater than or equal to the requested
