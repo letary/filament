@@ -37,6 +37,7 @@ git show <sha>                                            # one change with its 
 | 0016 | gltfio | anisotropic filtering on glTF textures (`setDefaultTextureAnisotropy`) |
 | 0017 | View | `setStructureSamplingEnabled` — scene depth in the color pass (soft particles) |
 | 0018 | ColorGrading | extended-range (HDR display) output + `ExtendedRangeToneMapper` |
+| 0019 | gltfio | bone matrices computed once per identical skin + target world transform (modular characters) |
 
 ## Adding a change
 

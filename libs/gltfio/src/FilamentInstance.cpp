@@ -23,6 +23,8 @@
 #include <utils/Log.h>
 #include <utils/Panic.h>
 
+#include <cstring>
+
 using namespace filament;
 using namespace filament::math;
 using namespace utils;
@@ -52,15 +54,55 @@ Animator* FFilamentInstance::getAnimator() const noexcept {
 
 // creator-gl patch 0013: the skinning flush lifted out of AnimatorImpl::updateBoneMatrices — same
 // math, no Animator. See the comment on FilamentInstance::updateBoneMatrices.
+// lecodes 0019: two skins are interchangeable when they drive the same joint entities with
+// bit-identical inverse bind matrices — Blender exports a modular character as one such skin per
+// mesh. Their bone matrices differ only by the target's world transform.
+static bool sameMat(const mat4& a, const mat4& b) {
+    return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3];
+}
+
 void FFilamentInstance::updateBoneMatrices() {
     assert_invariant(mSkins.size() == mOwner->mSkins.size());
     RenderableManager& rm = mOwner->mEngine->getRenderableManager();
     TransformManager& tm = mOwner->mEngine->getTransformManager();
-    size_t skinIndex = 0;
-    for (const auto& skin : mSkins) {
-        const auto& assetSkin = mOwner->mSkins[skinIndex++];
+    const size_t nskins = mSkins.size();
+    if (mSkinCanonical.size() != nskins) {
+        auto sameSkin = [this](size_t a, size_t b) {
+            const auto& ja = mSkins[a].joints;
+            const auto& jb = mSkins[b].joints;
+            const auto& ia = mOwner->mSkins[a].inverseBindMatrices;
+            const auto& ib = mOwner->mSkins[b].inverseBindMatrices;
+            const size_t n = ja.size();
+            if (n != jb.size() || ia.size() != n || ib.size() != n) {
+                return false;
+            }
+            for (size_t i = 0; i < n; i++) {
+                if (!(ja[i] == jb[i])) {
+                    return false;
+                }
+            }
+            return memcmp(ia.data(), ib.data(), n * sizeof(mat4f)) == 0;
+        };
+        mSkinCanonical.resize(nskins);
+        for (size_t i = 0; i < nskins; i++) {
+            mSkinCanonical[i] = uint16_t(i);
+            for (size_t j = 0; j < i; j++) {
+                if (mSkinCanonical[j] == j && sameSkin(i, j)) {
+                    mSkinCanonical[i] = uint16_t(j);
+                    break;
+                }
+            }
+        }
+        mBoneCache.assign(nskins, BoneCache{});
+    }
+    for (BoneCache& c : mBoneCache) {
+        c.valid = false;
+    }
+    for (size_t skinIndex = 0; skinIndex < nskins; skinIndex++) {
+        const Skin& skin = mSkins[skinIndex];
+        const auto& assetSkin = mOwner->mSkins[skinIndex];
         const size_t njoints = skin.joints.size();
-        mBoneMatrices.resize(njoints);
+        BoneCache& cache = mBoneCache[mSkinCanonical[skinIndex]];
         for (Entity entity : skin.targets) {
             auto renderable = rm.getInstance(entity);
             if (!renderable) {
@@ -71,13 +113,20 @@ void FFilamentInstance::updateBoneMatrices() {
             if (xformable) {
                 inverseGlobalTransform = inverse(tm.getWorldTransformAccurate(xformable));
             }
-            for (size_t boneIndex = 0; boneIndex < njoints; ++boneIndex) {
-                TransformManager::Instance jointInstance = tm.getInstance(skin.joints[boneIndex]);
-                mBoneMatrices[boneIndex] =
-                        mat4f{ inverseGlobalTransform * tm.getWorldTransformAccurate(jointInstance) } *
-                        assetSkin.inverseBindMatrices[boneIndex];
+            // Targets at the same world transform (the common case: every mesh node of a character
+            // at its root) share the matrices computed for the first one.
+            if (!cache.valid || !sameMat(cache.inverseGlobal, inverseGlobalTransform)) {
+                cache.bones.resize(njoints);
+                for (size_t boneIndex = 0; boneIndex < njoints; ++boneIndex) {
+                    TransformManager::Instance jointInstance = tm.getInstance(skin.joints[boneIndex]);
+                    cache.bones[boneIndex] =
+                            mat4f{ inverseGlobalTransform * tm.getWorldTransformAccurate(jointInstance) } *
+                            assetSkin.inverseBindMatrices[boneIndex];
+                }
+                cache.inverseGlobal = inverseGlobalTransform;
+                cache.valid = true;
             }
-            rm.setBones(renderable, mBoneMatrices.data(), mBoneMatrices.size());
+            rm.setBones(renderable, cache.bones.data(), cache.bones.size());
         }
     }
 }
