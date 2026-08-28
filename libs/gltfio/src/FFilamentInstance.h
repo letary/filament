@@ -109,7 +109,18 @@ struct FFilamentInstance : public FilamentInstance {
 
     utils::FixedCapacityVector<MaterialInstance*> mMaterialInstances;
 
-    std::vector<math::mat4f> mBoneMatrices;            // creator-gl patch 0013: per-flush scratch
+    // lecodes 0019: bone matrices are computed once per (skin joints + inverse bind matrices, target
+    // world transform) and shared by every target that matches — a modular character exported as
+    // one skin per mesh (or one skin with a dozen targets) otherwise recomputes the same 160 joint
+    // products a dozen times per frame. mSkinCanonical[i] = lowest skin index with the same joints
+    // and bit-identical IBMs (built on the first flush; skins never change after creation).
+    std::vector<uint16_t> mSkinCanonical;
+    struct BoneCache {
+        bool valid = false;                            // computed during THIS flush
+        math::mat4 inverseGlobal;                      // the target world transform it was computed for
+        std::vector<math::mat4f> bones;
+    };
+    std::vector<BoneCache> mBoneCache;                 // indexed by canonical skin
 
     void createAnimator();
     Animator* getAnimator() const noexcept;

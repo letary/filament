@@ -46,6 +46,7 @@ first published is `lecodes-1.75.1`.
 | 0016 | gltfio | anisotropic filtering on glTF textures (`setDefaultTextureAnisotropy`) |
 | 0017 | View | `setStructureSamplingEnabled` — scene depth in the color pass (soft particles, decals) |
 | 0018 | ColorGrading | extended-range (HDR display) output + `ExtendedRangeToneMapper` (compiled in; no host asks for an EDR swap chain yet) |
+| 0019 | gltfio | bone matrices computed once per identical skin + target world transform (modular characters) |
 
 ## Adding a change
 
