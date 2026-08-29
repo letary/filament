@@ -38,6 +38,7 @@ git show <sha>                                            # one change with its 
 | 0017 | View | `setStructureSamplingEnabled` — scene depth in the color pass (soft particles) |
 | 0018 | ColorGrading | extended-range (HDR display) output + `ExtendedRangeToneMapper` |
 | 0019 | gltfio | bone matrices computed once per identical skin + target world transform (modular characters) |
+| 0020 | OpenGL | external samplers as `sampler2D` where `OES_EGL_image_external_essl3` is missing (WebGL): shader rewrite + 2D texture allowed in the external slot |
 
 ## Adding a change
 

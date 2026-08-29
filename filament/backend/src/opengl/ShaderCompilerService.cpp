@@ -85,6 +85,8 @@ static void process_GOOGLE_cpp_style_line_directive(OpenGLContext const& context
         size_t len) noexcept;
 static void process_OVR_multiview2(OpenGLContext const& context, int32_t eyeCount, char* source,
         size_t len) noexcept;
+static void process_OES_EGL_image_external(OpenGLContext const& context, char* source,
+        size_t len) noexcept;
 static std::string_view process_ARB_shading_language_packing(OpenGLContext& context) noexcept;
 static std::string_view process_countBits(OpenGLContext& context) noexcept;
 static std::array<std::string_view, 3> splitShaderSource(std::string_view source);
@@ -828,6 +830,10 @@ void ShaderCompilerService::cancelPendingSynchronousProgram(program_token_t cons
             // remove GOOGLE_cpp_style_line_directive
             process_GOOGLE_cpp_style_line_directive(context, shader_src, shader_len);
 
+            // lecodes 0020: external samplers → plain 2D where the context has no
+            // OES_EGL_image_external_essl3 (WebGL)
+            process_OES_EGL_image_external(context, shader_src, shader_len);
+
             // replace the value of layout(num_views = X) for multiview extension
             if (multiview && stage == ShaderStage::VERTEX) {
                 process_OVR_multiview2(context, numViews, shader_src, shader_len);
@@ -1128,6 +1134,42 @@ UTILS_NOINLINE
         if (UTILS_UNLIKELY(requestsGoogleLineDirectivesExtension({ source, len }))) {
             removeGoogleLineDirectives(source, len);// length is unaffected
         }
+    }
+}
+
+// lecodes 0020: a MOBILE-model shader with external samplers carries `samplerExternalOES` plus a
+// `#extension GL_OES_EGL_image_external_essl3 : require` line. On a context WITHOUT that
+// extension -- WebGL, which has no GL_TEXTURE_EXTERNAL_OES target to bind at all -- such a shader
+// still compiles and links under ANGLE, but an external sampler can only ever read the unit's
+// (empty) external binding, so it samples black. The driver already falls back to a plain 2D
+// texture for external samplers when the extension is missing (OpenGLDriver::createTextureR,
+// "what else can we do?"); this makes the shader agree with it. In-place and byte-for-byte, like
+// the passes around it: the sampler type is padded with spaces and the directive becomes a comment.
+/* static */ void process_OES_EGL_image_external(OpenGLContext const& context,
+        char* source, size_t const len) noexcept {
+    if (context.ext.OES_EGL_image_external_essl3) {
+        return;
+    }
+    std::string_view const shader{ source, len };
+    constexpr std::string_view external = "samplerExternalOES";
+    constexpr std::string_view sampler2d = "sampler2D";
+    static_assert(sampler2d.size() < external.size());
+    bool found = false;
+    for (size_t p = shader.find(external); p != std::string_view::npos;
+            p = shader.find(external, p + external.size())) {
+        std::memcpy(source + p, sampler2d.data(), sampler2d.size());
+        std::memset(source + p + sampler2d.size(), ' ', external.size() - sampler2d.size());
+        found = true;
+    }
+    if (!found) {
+        return;
+    }
+    // "#extension GL_OES_EGL_image_external[_essl3] : require" -> "//xtension ..." (a comment)
+    constexpr std::string_view directive = "#extension GL_OES_EGL_image_external";
+    for (size_t p = shader.find(directive); p != std::string_view::npos;
+            p = shader.find(directive, p + directive.size())) {
+        source[p] = '/';
+        source[p + 1] = '/';
     }
 }
 
