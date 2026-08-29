@@ -47,6 +47,7 @@ first published is `lecodes-1.75.1`.
 | 0017 | View | `setStructureSamplingEnabled` — scene depth in the color pass (soft particles, decals) |
 | 0018 | ColorGrading | extended-range (HDR display) output + `ExtendedRangeToneMapper`. Under extended range the custom LUT grades the mapper's BASE curve, before the stretch (`ExtendedRangeToneMapper(…, lut, lutDimension)`; the builder's `customLut` is skipped there): the `.cube` is defined on sRGB-encoded 0..1, and applied after the OETF to the extended value it clamped every highlight above SDR white into its white corner. The macOS desktop host's EDR scene layer (direct mode on Metal) is the consumer |
 | 0019 | gltfio | bone matrices computed once per identical skin + target world transform (modular characters) |
+| 0020 | OpenGL | external samplers as `sampler2D` where `OES_EGL_image_external_essl3` is missing (WebGL): shader rewrite + 2D texture allowed in the external slot |
 
 ## Adding a change
 
