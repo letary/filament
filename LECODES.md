@@ -47,6 +47,7 @@ first published is `lecodes-1.75.1`.
 | 0017 | View | `setStructureSamplingEnabled` — scene depth in the color pass (soft particles, decals) |
 | 0018 | ColorGrading | extended-range (HDR display) output + `ExtendedRangeToneMapper` (compiled in; no host asks for an EDR swap chain yet) |
 | 0019 | gltfio | bone matrices computed once per identical skin + target world transform (modular characters) |
+| 0020 | OpenGL | external samplers as `sampler2D` where `OES_EGL_image_external_essl3` is missing (WebGL): shader rewrite + 2D texture allowed in the external slot |
 
 ## Adding a change
 

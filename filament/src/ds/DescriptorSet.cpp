@@ -219,7 +219,11 @@ bool DescriptorSet::isTextureCompatibleWithDescriptor(
 
     switch (s) {
         case SamplerType::SAMPLER_2D:
-            if (!is2dTypeDescriptor(d)) {
+            // lecodes 0020: a 2D texture may fill an external-sampler slot. Platforms without
+            // external textures (WebGL, desktop GL) bind that slot as GL_TEXTURE_2D anyway -- the
+            // driver's own fallback -- and the GL shader is rewritten to sampler2D to match
+            // (ShaderCompilerService::process_OES_EGL_image_external).
+            if (!is2dTypeDescriptor(d) && d != DescriptorType::SAMPLER_EXTERNAL) {
                 return false;
             }
             break;
