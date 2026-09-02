@@ -195,8 +195,18 @@ add_library(gltfio_core STATIC ${PUBLIC_HDRS} ${SRCS})
 target_include_directories(gltfio_core PUBLIC ${PUBLIC_HDR_DIR})
 set_target_properties(gltfio_core PROPERTIES FOLDER Libs)
 
-target_compile_definitions(gltfio_core PUBLIC -DGLTFIO_DRACO_SUPPORTED=1)
-target_link_libraries(gltfio_core PUBLIC dracodec meshoptimizer ${WEBP_DECODER_LIB_TARGET})
+# Draco mesh decompression. gltfio already carries the OFF path (DracoCache.cpp's #else stubs, and
+# AssetLoader refuses an asset whose extensions_required lists KHR_draco_mesh_compression with a
+# clear log line) — only this wiring was hard-coded ON, which forces libdracodec into every host
+# that links gltfio whether its assets use the extension or not.
+option(FILAMENT_GLTFIO_DRACO "Build gltfio with Draco mesh decompression" ON)
+if (FILAMENT_GLTFIO_DRACO)
+    target_compile_definitions(gltfio_core PUBLIC -DGLTFIO_DRACO_SUPPORTED=1)
+    target_link_libraries(gltfio_core PUBLIC dracodec meshoptimizer ${WEBP_DECODER_LIB_TARGET})
+else()
+    target_compile_definitions(gltfio_core PUBLIC -DGLTFIO_DRACO_SUPPORTED=0)
+    target_link_libraries(gltfio_core PUBLIC meshoptimizer ${WEBP_DECODER_LIB_TARGET})
+endif()
 
 if (WASM_PTHREADS)
     target_compile_definitions(gltfio_core PUBLIC -DFILAMENT_WASM_THREADS)
