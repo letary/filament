@@ -52,6 +52,17 @@ class Ktx2Reader {
         ~Ktx2Reader();
 
         /**
+         * lecodes 0022: process-wide cap on the size of the textures this reader builds (a
+         * "texture quality" setting). A file whose width or height exceeds `size` has its top
+         * mip levels SKIPPED: the first level that fits becomes level 0, so nothing is
+         * resampled and the transcode gets cheaper along with the upload. 0 = unlimited (the
+         * default). Applies to textures created after the call; a texture already built keeps
+         * its size. Read at createTexture(), so an in-flight asyncCreate is unaffected.
+         */
+        static void setMaxTextureSize(uint32_t size) noexcept;
+        static uint32_t getMaxTextureSize() noexcept;
+
+        /**
          * Requests that the reader constructs Filament textures with given internal format.
          *
          * This MUST be called at least once before calling load().
@@ -190,7 +201,7 @@ class Ktx2Reader {
         Ktx2Reader& operator=(Ktx2Reader&& that) noexcept = delete;
 
         Texture* createTexture(basist::ktx2_transcoder* transcoder, const void* data,
-                size_t size, TransferFunction transfer);
+                size_t size, TransferFunction transfer, uint32_t* skipLevels);
 
         Engine& mEngine;
         basist::ktx2_transcoder* const mTranscoder;

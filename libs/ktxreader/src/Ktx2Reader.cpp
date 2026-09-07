@@ -27,6 +27,8 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Warray-bounds"
 #include <basisu_transcoder.h>
+
+#include <algorithm>
 #pragma clang diagnostic pop
 
 using namespace basist;
@@ -182,11 +184,28 @@ static Result transcodeImageLevel(ktx2_transcoder& transcoder,
 
 namespace ktxreader {
 
+// lecodes 0022: the size cap (Ktx2Reader::setMaxTextureSize) and the number of top mip levels a
+// file has to drop to fit under it. Never drops the last level: a file smaller than the cap, or a
+// single-level file, is untouched.
+static uint32_t sMaxTextureSize = 0;
+
+static uint32_t levelsToSkip(uint32_t width, uint32_t height, uint32_t levels) {
+    uint32_t skip = 0;
+    if (sMaxTextureSize == 0) return 0;
+    while (skip + 1 < levels && (width > sMaxTextureSize || height > sMaxTextureSize)) {
+        width = width > 1 ? width / 2 : 1;
+        height = height > 1 ? height / 2 : 1;
+        skip++;
+    }
+    return skip;
+}
+
 class FAsync : public Async {
 public:
-    FAsync(Texture* texture, Engine& engine, ktx2_transcoder* transcoder, Buffer&& buf) :
+    FAsync(Texture* texture, Engine& engine, ktx2_transcoder* transcoder, Buffer&& buf,
+            uint32_t skipLevels) :
             mTexture(texture), mEngine(engine), mTranscoder(transcoder),
-            mSourceBuffer(std::move(buf)) {}
+            mSourceBuffer(std::move(buf)), mSkipLevels(skipLevels) {}
     Texture* getTexture() const noexcept { return mTexture; }
     Result doTranscoding();
     void uploadImages();
@@ -213,7 +232,13 @@ private:
 
     // Storage for the content of the KTX2 file.
     Buffer mSourceBuffer;
+
+    // lecodes 0022: file levels below this index are not transcoded (the size cap).
+    uint32_t mSkipLevels = 0;
 };
+
+void Ktx2Reader::setMaxTextureSize(uint32_t size) noexcept { sMaxTextureSize = size; }
+uint32_t Ktx2Reader::getMaxTextureSize() noexcept { return sMaxTextureSize; }
 
 Ktx2Reader::Ktx2Reader(Engine& engine, bool quiet) :
     mEngine(engine),
@@ -250,7 +275,8 @@ void Ktx2Reader::unrequestFormat(Texture::InternalFormat format) noexcept {
 }
 
 Texture* Ktx2Reader::load(const void* data, size_t size, TransferFunction transfer) {
-    Texture* texture = createTexture(mTranscoder, data, size, transfer);
+    uint32_t skipLevels = 0;
+    Texture* texture = createTexture(mTranscoder, data, size, transfer, &skipLevels);
     if (texture == nullptr) {
         return nullptr;
     }
@@ -266,7 +292,7 @@ Texture* Ktx2Reader::load(const void* data, size_t size, TransferFunction transf
     ktx2_transcoder_state basisThreadState;
     basisThreadState.clear();
 
-    for (uint32_t levelIndex = 0, n = mTranscoder->get_levels(); levelIndex < n; levelIndex++) {
+    for (uint32_t levelIndex = skipLevels, n = mTranscoder->get_levels(); levelIndex < n; levelIndex++) {
         Texture::PixelBufferDescriptor* pbd;
         Result result = transcodeImageLevel(*mTranscoder, basisThreadState, texture->getFormat(),
                 levelIndex, &pbd);
@@ -277,7 +303,7 @@ Texture* Ktx2Reader::load(const void* data, size_t size, TransferFunction transf
             }
             return nullptr;
         }
-        texture->setImage(mEngine, levelIndex, std::move(*pbd));
+        texture->setImage(mEngine, levelIndex - skipLevels, std::move(*pbd));
         delete pbd;
     }
     return texture;
@@ -295,14 +321,14 @@ FAsync::~FAsync() {
 Result FAsync::doTranscoding() {
     ktx2_transcoder_state basisThreadState;
     basisThreadState.clear();
-    for (uint32_t levelIndex = 0, n = mTranscoder->get_levels(); levelIndex < n; levelIndex++) {
+    for (uint32_t levelIndex = mSkipLevels, n = mTranscoder->get_levels(); levelIndex < n; levelIndex++) {
         Texture::PixelBufferDescriptor* pbd;
         Result result = transcodeImageLevel(*mTranscoder, basisThreadState, mTexture->getFormat(),
                 levelIndex, &pbd);
         if (UTILS_UNLIKELY(result != Result::SUCCESS)) {
             return result;
         }
-        mTranscoderResults[levelIndex].store(pbd);
+        mTranscoderResults[levelIndex - mSkipLevels].store(pbd);
     }
     return Result::SUCCESS;
 }
@@ -324,7 +350,9 @@ void FAsync::uploadImages() {
 Async* Ktx2Reader::asyncCreate(const void* data, size_t size, TransferFunction transfer) {
     Buffer ktx2content((uint8_t*)data, (uint8_t*)data + size);
     ktx2_transcoder* transcoder = new ktx2_transcoder();
-    Texture* texture = createTexture(transcoder, ktx2content.data(), ktx2content.size(), transfer);
+    uint32_t skipLevels = 0;
+    Texture* texture = createTexture(transcoder, ktx2content.data(), ktx2content.size(), transfer,
+            &skipLevels);
     if (texture == nullptr) {
         delete transcoder;
         return nullptr;
@@ -337,7 +365,7 @@ Async* Ktx2Reader::asyncCreate(const void* data, size_t size, TransferFunction t
     // There's no need to do any further work at this point but it should be noted that this is the
     // point at which we first come to know the number of miplevels, dimensions, etc. If we had a
     // dynamically sized array to store decoder results, we would reserve it here.
-    return new FAsync(texture, mEngine, transcoder, std::move(ktx2content));
+    return new FAsync(texture, mEngine, transcoder, std::move(ktx2content), skipLevels);
 }
 
 void Ktx2Reader::asyncDestroy(Async** async) {
@@ -346,7 +374,8 @@ void Ktx2Reader::asyncDestroy(Async** async) {
 }
 
 Texture* Ktx2Reader::createTexture(ktx2_transcoder* transcoder, const void* data, size_t size,
-        TransferFunction transfer) {
+        TransferFunction transfer, uint32_t* skipLevels) {
+    *skipLevels = 0;
     if (!transcoder->init(data, size)) {
         if (!mQuiet) {
             utils::slog.e << "BasisU transcoder init failed." << utils::io::endl;
@@ -423,10 +452,14 @@ Texture* Ktx2Reader::createTexture(ktx2_transcoder* transcoder, const void* data
         return nullptr;
     }
 
+    // lecodes 0022: under a size cap the texture is built from the first level that fits.
+    const uint32_t skip = levelsToSkip(transcoder->get_width(), transcoder->get_height(),
+            transcoder->get_levels());
+    *skipLevels = skip;
     Texture* texture = Texture::Builder()
-        .width(transcoder->get_width())
-        .height(transcoder->get_height())
-        .levels(transcoder->get_levels())
+        .width(std::max(1u, transcoder->get_width() >> skip))
+        .height(std::max(1u, transcoder->get_height() >> skip))
+        .levels(transcoder->get_levels() - skip)
         .sampler(Texture::Sampler::SAMPLER_2D)
         .format(resolvedFormat)
         .build(mEngine);
