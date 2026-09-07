@@ -40,6 +40,7 @@ git show <sha>                                            # one change with its 
 | 0019 | gltfio | bone matrices computed once per identical skin + target world transform (modular characters) |
 | 0020 | OpenGL | external samplers as `sampler2D` where `OES_EGL_image_external_essl3` is missing (WebGL): shader rewrite + 2D texture allowed in the external slot |
 | 0021 | gltfio | `FILAMENT_GLTFIO_DRACO` option (default ON) so a host can build without Draco |
+| 0022 | ktxreader + gltfio | texture size cap: `Ktx2Reader::setMaxTextureSize` skips top mip levels, gltfio `setDefaultMaxTextureSize` downsamples stb images (the texture-quality setting) |
 
 ## Adding a change
 
