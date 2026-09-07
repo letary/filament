@@ -135,6 +135,11 @@ static float gDefaultTextureAnisotropy = 2.0f;
 void setDefaultTextureAnisotropy(float level) noexcept { gDefaultTextureAnisotropy = level; }
 float getDefaultTextureAnisotropy() noexcept { return gDefaultTextureAnisotropy; }
 
+// patch 0022: the StbProvider size cap, 0 = unlimited.
+static uint32_t gDefaultMaxTextureSize = 0;
+void setDefaultMaxTextureSize(uint32_t size) noexcept { gDefaultMaxTextureSize = size; }
+uint32_t getDefaultMaxTextureSize() noexcept { return gDefaultMaxTextureSize; }
+
 void FFilamentAsset::applyTextureBinding(size_t assetTextureIndex, const TextureSlot& tb,
         bool addDependency) {
     const TextureInfo& info = mTextures[assetTextureIndex];
