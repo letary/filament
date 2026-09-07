@@ -71,6 +71,16 @@ class FilamentInstance;
 UTILS_PUBLIC void setDefaultTextureAnisotropy(float level) noexcept;
 UTILS_PUBLIC float getDefaultTextureAnisotropy() noexcept;
 
+/**
+ * creator-gl patch 0022: size cap for the glTF images decoded by StbProvider (PNG / JPEG). An image
+ * wider or taller than `size` is box-downsampled by powers of two until it fits, before the upload
+ * and the mip generation. 0 = unlimited (the default). The KTX2 path has its own twin,
+ * ktxreader::Ktx2Reader::setMaxTextureSize, which drops top mip levels instead. Like the
+ * anisotropy default this reaches textures decoded from here on, not ones already uploaded.
+ */
+UTILS_PUBLIC void setDefaultMaxTextureSize(uint32_t size) noexcept;
+UTILS_PUBLIC uint32_t getDefaultMaxTextureSize() noexcept;
+
 class UTILS_PUBLIC FilamentAsset {
 public:
     using Entity = utils::Entity;

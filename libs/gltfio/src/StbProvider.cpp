@@ -15,6 +15,7 @@
  */
 
 #include <gltfio/TextureProvider.h>
+#include <gltfio/FilamentAsset.h>   // getDefaultMaxTextureSize (patch 0022)
 
 #include <filament/Engine.h>
 #include <filament/Texture.h>
@@ -23,6 +24,9 @@
 #include <utils/Log.h>
 
 #include <stb_image.h>
+
+#include <algorithm>
+#include <cstdlib>
 
 #include <string>
 #include <vector>
@@ -86,6 +90,46 @@ private:
     Engine* const mEngine;
 };
 
+// lecodes 0022: the size cap (setDefaultMaxTextureSize). cappedSize() says what the texture is built
+// at, downsampleToCap() brings decoded RGBA8 texels to that size with a box filter, halving until
+// the image fits. Both are no-ops without a cap, so the untouched path stays byte-identical.
+static void cappedSize(int& width, int& height) {
+    const uint32_t cap = getDefaultMaxTextureSize();
+    if (cap == 0) return;
+    while ((uint32_t) width > cap || (uint32_t) height > cap) {
+        if (width <= 1 && height <= 1) break;
+        width = width > 1 ? width / 2 : 1;
+        height = height > 1 ? height / 2 : 1;
+    }
+}
+
+static stbi_uc* downsampleToCap(stbi_uc* texels, int width, int height) {
+    int cw = width, ch = height;
+    cappedSize(cw, ch);
+    while (texels && (width > cw || height > ch)) {
+        const int nw = width > 1 ? width / 2 : 1;
+        const int nh = height > 1 ? height / 2 : 1;
+        stbi_uc* out = (stbi_uc*) malloc((size_t) nw * nh * 4);
+        if (!out) return texels;
+        for (int y = 0; y < nh; y++) {
+            const int y0 = std::min(y * 2, height - 1), y1 = std::min(y * 2 + 1, height - 1);
+            for (int x = 0; x < nw; x++) {
+                const int x0 = std::min(x * 2, width - 1), x1 = std::min(x * 2 + 1, width - 1);
+                const stbi_uc* a = texels + ((size_t) y0 * width + x0) * 4;
+                const stbi_uc* b = texels + ((size_t) y0 * width + x1) * 4;
+                const stbi_uc* c = texels + ((size_t) y1 * width + x0) * 4;
+                const stbi_uc* d = texels + ((size_t) y1 * width + x1) * 4;
+                stbi_uc* o = out + ((size_t) y * nw + x) * 4;
+                for (int k = 0; k < 4; k++) o[k] = (stbi_uc) ((a[k] + b[k] + c[k] + d[k] + 2) / 4);
+            }
+        }
+        stbi_image_free(texels);   // stb's allocation is plain malloc, and so is ours
+        texels = out;
+        width = nw; height = nh;
+    }
+    return texels;
+}
+
 Texture* StbProvider::pushTexture(const uint8_t* data, size_t byteCount,
             const char* mimeType, TextureFlags flags) {
     int width, height, numComponents;
@@ -96,6 +140,7 @@ Texture* StbProvider::pushTexture(const uint8_t* data, size_t byteCount,
 
     using InternalFormat = Texture::InternalFormat;
 
+    cappedSize(width, height);   // patch 0022: the decode job downsamples to the same size
     Texture* texture = Texture::Builder()
             .width(width)
             .height(height)
@@ -136,6 +181,7 @@ Texture* StbProvider::pushTexture(const uint8_t* data, size_t byteCount,
 
         stbi_uc* texels = stbi_load_from_memory(source.data(), source.size(),
                 &width, &height, &comp, 4);
+        texels = downsampleToCap(texels, width, height);   // patch 0022
         source.clear();
         source.shrink_to_fit();
         info->decodedTexelsBaseMipmap.store(texels ? intptr_t(texels) : DECODING_ERROR);
@@ -256,6 +302,7 @@ void StbProvider::decodeSingleTexture() {
             int width, height, comp;
             stbi_uc* texels = stbi_load_from_memory(source.data(), source.size(),
                     &width, &height, &comp, 4);
+            texels = downsampleToCap(texels, width, height);   // patch 0022
             source.clear();
             source.shrink_to_fit();
             info->decodedTexelsBaseMipmap.store(texels ? intptr_t(texels) : DECODING_ERROR);
