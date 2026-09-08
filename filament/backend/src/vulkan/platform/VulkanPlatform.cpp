@@ -38,6 +38,7 @@ using namespace bluevk;
 namespace filament::backend {
 
 bool gFvkTimelineSemaphore = false;   // creator-gl patch 0010
+bool gFvkGuestBindingFeatures = false; // creator-gl patch 0023
 
 namespace {
 
@@ -244,6 +245,15 @@ ExtensionSet getDeviceExtensions(VkPhysicalDevice device, bool enableDebugUtils 
         // creator-gl patch 0010: the per-frame signal a host compositor waits on (core in 1.2, but
         // the instance is 1.1 — go through the extension).
         VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
+
+        // creator-gl patch 0023: a guest renderer on this device (sokol-gfx's Vulkan backend, the
+        // desktop host's 2D engine) binds through descriptor buffers and synchronization2; the
+        // extensions are requested here, the features enabled below when the device has them.
+        VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME,
+        VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
+        VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
+        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+        VK_KHR_COPY_COMMANDS_2_EXTENSION_NAME,   // vkCmdCopyBufferToImage2 (core in 1.3)
 
 #if FVK_ENABLED(FVK_DEBUG_SHADER_MODULE)
         VK_EXT_PIPELINE_CREATION_FEEDBACK_EXTENSION_NAME,
@@ -1224,7 +1234,57 @@ void VulkanPlatform::createLogicalDeviceAndQueues(const ExtensionSet& deviceExte
         }
     }
 
+    // creator-gl patch 0023: descriptor buffers + synchronization2 + buffer device address for a guest
+    // renderer sharing the device (sokol-gfx). All-or-nothing: the guest needs the three together.
+    VkPhysicalDeviceDescriptorBufferFeaturesEXT descriptorBuffer = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT,
+        .descriptorBuffer = VK_TRUE,
+    };
+    VkPhysicalDeviceBufferDeviceAddressFeaturesKHR bufferDeviceAddress = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR,
+        .bufferDeviceAddress = VK_TRUE,
+    };
+    VkPhysicalDeviceSynchronization2FeaturesKHR synchronization2 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR,
+        .synchronization2 = VK_TRUE,
+    };
+    gFvkGuestBindingFeatures = false;
+    if (setContains(deviceExtensions, VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME) &&
+            setContains(deviceExtensions, VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME) &&
+            setContains(deviceExtensions, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME) &&
+            setContains(deviceExtensions, VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME) &&
+            vkGetPhysicalDeviceFeatures2) {
+        VkPhysicalDeviceDescriptorBufferFeaturesEXT queryDb = {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT,
+        };
+        VkPhysicalDeviceBufferDeviceAddressFeaturesKHR queryBda = {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR,
+            .pNext = &queryDb,
+        };
+        VkPhysicalDeviceSynchronization2FeaturesKHR querySync2 = {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR,
+            .pNext = &queryBda,
+        };
+        VkPhysicalDeviceFeatures2 features2 = {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+            .pNext = &querySync2,
+        };
+        vkGetPhysicalDeviceFeatures2(mImpl->mPhysicalDevice, &features2);
+        if (queryDb.descriptorBuffer == VK_TRUE && queryBda.bufferDeviceAddress == VK_TRUE &&
+                querySync2.synchronization2 == VK_TRUE) {
+            chainStruct(&deviceCreateInfo, &descriptorBuffer);
+            chainStruct(&deviceCreateInfo, &bufferDeviceAddress);
+            chainStruct(&deviceCreateInfo, &synchronization2);
+            gFvkGuestBindingFeatures = true;
+        }
+    }
+
     mImpl->mDevice = createVkDevice(deviceCreateInfo);
+}
+
+// creator-gl patch 0023: whether the device was created with the guest-renderer feature set above.
+extern "C" bool filament_vk_guestBindingFeatures() {
+    return gFvkGuestBindingFeatures;
 }
 
 } // namespace filament::backend
