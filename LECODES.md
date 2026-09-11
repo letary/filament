@@ -50,6 +50,7 @@ first published is `lecodes-1.75.1`.
 | 0020 | OpenGL | external samplers as `sampler2D` where `OES_EGL_image_external_essl3` is missing (WebGL): shader rewrite + 2D texture allowed in the external slot |
 | 0022 | ktxreader + gltfio | texture size cap: `Ktx2Reader::setMaxTextureSize` skips top mip levels, gltfio `setDefaultMaxTextureSize` downsamples stb images (the texture-quality setting) |
 | 0023 | Vulkan | device extensions + features for a guest renderer on the shared device (sokol-gfx: descriptor buffer, descriptor indexing, buffer device address, synchronization2, copy commands 2); `filament_vk_guestBindingFeatures()` |
+| 0024 | gltfio | ubershader archive order: `specular_*` before `transmission_*`/`volume_*` — a KHR_materials_specular-only material no longer takes the refractive transmission ubershader (SSR mip pyramid + second colour pass every frame) |
 
 ## Adding a change
 

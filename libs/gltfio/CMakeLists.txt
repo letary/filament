@@ -142,6 +142,16 @@ build_ubershader(specularGlossiness_masked base            specularGlossiness ma
 build_ubershader(unlit_fade                base            unlit fade)
 build_ubershader(unlit_opaque              base            unlit opaque)
 build_ubershader(unlit_masked              base            unlit masked)
+# lecodes 0024: the specular ubershaders come BEFORE transmission/volume. ArchiveCache::getMaterial
+# takes the FIRST spec that supports every feature the material asks for, and transmission.spec /
+# volume.spec list Specular as optional: a material with KHR_materials_specular and NO transmission
+# (a Tripo export writes specularFactor 0) landed on the transmission ubershader, whose
+# refractionMode: screenspace made Filament run the SSR mip pyramid + a second colour pass every
+# frame for a plain opaque mesh. specular.spec has Transmission = unsupported, so real
+# transmission materials still fall through to their variants.
+build_ubershader(specular_opaque           specular        lit opaque)
+build_ubershader(specular_fade             specular        lit fade)
+build_ubershader(specular_masked           specular        lit masked)
 build_ubershader(transmission_opaque       transmission    lit opaque)
 build_ubershader(transmission_fade         transmission    lit fade)
 build_ubershader(transmission_masked       transmission    lit masked)
@@ -149,9 +159,6 @@ build_ubershader(volume_opaque             volume          lit opaque)
 build_ubershader(volume_fade               volume          lit fade)
 build_ubershader(volume_masked             volume          lit masked)
 build_ubershader(sheen                     sheen           _ _)
-build_ubershader(specular_opaque           specular        lit opaque)
-build_ubershader(specular_fade             specular        lit fade)
-build_ubershader(specular_masked           specular        lit masked)
 
 add_custom_target(uberz_file DEPENDS ${UBERZ_OUTPUT_PATH})
 set_target_properties(uberz_file PROPERTIES FOLDER Libs)
