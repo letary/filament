@@ -221,6 +221,25 @@ public:
     FilamentInstance* createInstance(FilamentAsset* asset);
 
     /**
+     * lecodes 0025: adds a new instance that SHARES the material instances of an existing
+     * instance of the same asset instead of receiving its own copies.
+     *
+     * Every primitive of the new instance binds the same MaterialInstance the donor's matching
+     * primitive binds (textures included), so a level made of thousands of copies of one asset
+     * costs one material instance set — not one per copy — and Filament's automatic instancing
+     * can merge their draws. A parameter written to such a material instance shows on every
+     * sharer: a client that needs a per-copy value duplicates the instance first
+     * (MaterialInstance::duplicate) and rebinds it on that copy's primitive.
+     *
+     * The donor keeps ownership: the new instance's getMaterialInstances() lists the shared
+     * pointers but never destroys them. Instances only die with the asset, so the donor always
+     * outlives its sharers. A null donor behaves like createInstance(asset).
+     *
+     * This cannot be called after FilamentAsset::releaseSourceData().
+     */
+    FilamentInstance* createInstance(FilamentAsset* asset, FilamentInstance const* shareMaterialsWith);
+
+    /**
      * Allows clients to enable diagnostic shading on newly-loaded assets.
      */
     void enableDiagnostics(bool enable = true);
