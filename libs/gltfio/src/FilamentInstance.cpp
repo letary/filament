@@ -38,8 +38,11 @@ FFilamentInstance::FFilamentInstance(Entity root, FFilamentAsset const* owner) :
 
 FFilamentInstance::~FFilamentInstance() {
     delete mAnimator;
-    for (auto mi : mMaterialInstances) {
-        mOwner->mEngine->destroy(mi);
+    // lecodes 0025: a sharer borrows its donor's material instances
+    if (mOwnsMaterialInstances) {
+        for (auto mi : mMaterialInstances) {
+            mOwner->mEngine->destroy(mi);
+        }
     }
 }
 

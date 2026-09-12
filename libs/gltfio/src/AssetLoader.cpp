@@ -19,6 +19,7 @@
 #include "FNodeManager.h"
 #include "FTrsTransformManager.h"
 #include "GltfEnums.h"
+#include "MaterialInstanceCache.h"
 #include "Utility.h"
 
 #include "extended/AssetLoaderExtended.h"
@@ -169,88 +170,24 @@ static LightManager::Type getLightType(const cgltf_light_type light) {
     }
 }
 
-// MaterialInstanceCache
-// ---------------------
-// Each glTF material definition corresponds to a single MaterialInstance, which are temporarily
-// cached when loading a FilamentInstance. If a given glTF material is referenced by multiple
-// glTF meshes, then their corresponding Filament primitives will share the same Filament
-// MaterialInstance and UvMap. The UvMap is a mapping from each texcoord slot in glTF to one of
-// Filament's 2 texcoord sets.
-//
-// Notes:
-// - The Material objects (used to create instances) are cached in MaterialProvider, not here.
-// - The cache is not responsible for destroying material instances.
-class MaterialInstanceCache {
-public:
-    struct Entry {
-        MaterialInstance* instance;
-        UvMap uvmap;
-    };
-
-    MaterialInstanceCache() {}
-
-    MaterialInstanceCache(const cgltf_data* hierarchy) :
+// MaterialInstanceCache — the class lives in MaterialInstanceCache.h (lecodes 0025); the two members
+// that need the complete cgltf types stay here.
+MaterialInstanceCache::MaterialInstanceCache(const cgltf_data* hierarchy) :
         mHierarchy(hierarchy),
         mMaterialInstances(hierarchy->materials_count, Entry{}),
         mMaterialInstancesWithVertexColor(hierarchy->materials_count, Entry{}) {}
 
-    void flush(utils::FixedCapacityVector<MaterialInstance*>* dest) {
-        size_t count = 0;
-        for (const Entry& entry : mMaterialInstances) {
-            if (entry.instance) {
-                ++count;
-            }
-        }
-        for (const Entry& entry : mMaterialInstancesWithVertexColor) {
-            if (entry.instance) {
-                ++count;
-            }
-        }
-        if (mDefaultMaterialInstance.instance) {
-            ++count;
-        }
-        if (mDefaultMaterialInstanceWithVertexColor.instance) {
-            ++count;
-        }
-        assert_invariant(dest->size() == 0);
-        dest->reserve(count);
-        for (const Entry& entry : mMaterialInstances) {
-            if (entry.instance) {
-                dest->push_back(entry.instance);
-            }
-        }
-        for (const Entry& entry : mMaterialInstancesWithVertexColor) {
-            if (entry.instance) {
-                dest->push_back(entry.instance);
-            }
-        }
-        if (mDefaultMaterialInstance.instance) {
-            dest->push_back(mDefaultMaterialInstance.instance);
-        }
-        if (mDefaultMaterialInstanceWithVertexColor.instance) {
-            dest->push_back(mDefaultMaterialInstanceWithVertexColor.instance);
-        }
+MaterialInstanceCache::Entry* MaterialInstanceCache::getEntry(const cgltf_material** mat,
+        bool vertexColor, const cgltf_material* defaultMat) {
+    if (*mat) {
+        EntryVector& entries = vertexColor ?
+                mMaterialInstancesWithVertexColor : mMaterialInstances;
+        const cgltf_material* basePointer = mHierarchy->materials;
+        return &entries[*mat - basePointer];
     }
-
-    Entry* getEntry(const cgltf_material** mat, bool vertexColor) {
-        if (*mat) {
-            EntryVector& entries = vertexColor ?
-                    mMaterialInstancesWithVertexColor : mMaterialInstances;
-            const cgltf_material* basePointer = mHierarchy->materials;
-            return &entries[*mat - basePointer];
-        }
-        *mat = &kDefaultMat;
-        return vertexColor ? &mDefaultMaterialInstanceWithVertexColor : &mDefaultMaterialInstance;
-    }
-
-private:
-    using EntryVector = utils::FixedCapacityVector<Entry>;
-    const cgltf_data* mHierarchy = {};
-    EntryVector mMaterialInstances;
-    EntryVector mMaterialInstancesWithVertexColor;
-    Entry mDefaultMaterialInstance = {};
-    Entry mDefaultMaterialInstanceWithVertexColor = {};
-};
+    *mat = defaultMat;
+    return vertexColor ? &mDefaultMaterialInstanceWithVertexColor : &mDefaultMaterialInstance;
+}
 
 struct FAssetLoader : public AssetLoader {
     FAssetLoader(AssetConfiguration const& config) :
@@ -275,6 +212,7 @@ struct FAssetLoader : public AssetLoader {
     FFilamentAsset* createInstancedAsset(const uint8_t* bytes, uint32_t numBytes,
             FilamentInstance** instances, size_t numInstances);
     FilamentInstance* createInstance(FFilamentAsset* fAsset);
+    FilamentInstance* createInstance(FFilamentAsset* fAsset, FFilamentInstance const* donor);
 
     static void destroy(FAssetLoader** loader) noexcept {
         delete *loader;
@@ -428,6 +366,11 @@ FFilamentAsset* FAssetLoader::createInstancedAsset(const uint8_t* bytes, uint32_
 }
 
 FilamentInstance* FAssetLoader::createInstance(FFilamentAsset* fAsset) {
+    return createInstance(fAsset, nullptr);
+}
+
+FilamentInstance* FAssetLoader::createInstance(FFilamentAsset* fAsset,
+        FFilamentInstance const* donor) {
     if (!fAsset->mSourceAsset) {
         slog.e << "Source data has been released; asset is frozen." << io::endl;
         return nullptr;
@@ -442,7 +385,15 @@ FilamentInstance* FAssetLoader::createInstance(FFilamentAsset* fAsset) {
     Entity instanceRoot = mEntityManager.create();
     mTransformManager.create(instanceRoot, rootTransform);
 
-    mMaterialInstanceCache = MaterialInstanceCache(srcAsset);
+    // lecodes 0025: with a donor the cache starts FULL — every createMaterialInstance below hits
+    // it and the new instance's primitives bind the donor's material instances (the textures are
+    // already bound there). Without one the cache is empty and the instance gets its own set.
+    if (donor) {
+        assert_invariant(donor->mOwner == fAsset);
+        mMaterialInstanceCache = donor->mMaterialInstanceCache;
+    } else {
+        mMaterialInstanceCache = MaterialInstanceCache(srcAsset);
+    }
 
     // Create an instance object, which is a just a lightweight wrapper around a vector of
     // entities and an animator. The creation of animator is triggered from ResourceLoader
@@ -473,6 +424,10 @@ FilamentInstance* FAssetLoader::createInstance(FFilamentAsset* fAsset) {
     instance->mBoundingBox = fAsset->mBoundingBox;
 
     mMaterialInstanceCache.flush(&instance->mMaterialInstances);
+    // lecodes 0025: keep the cache so this instance can be a donor; a sharer never destroys the
+    // list it was handed (the donor's destructor does, and instances only die with the asset).
+    instance->mMaterialInstanceCache = mMaterialInstanceCache;
+    instance->mOwnsMaterialInstances = donor == nullptr;
 
     fAsset->mDependencyGraph.commitEdges();
 
@@ -1518,7 +1473,7 @@ MaterialInstance* FAssetLoader::createMaterialInstance(const cgltf_material* inp
     bool vertexColor, FFilamentAsset* fAsset) {
     const cgltf_data* srcAsset = fAsset->mSourceAsset->hierarchy;
     MaterialInstanceCache::Entry* const cacheEntry =
-            mMaterialInstanceCache.getEntry(&inputMat, vertexColor);
+            mMaterialInstanceCache.getEntry(&inputMat, vertexColor, &kDefaultMat);
     if (cacheEntry->instance) {
         *uvmap = cacheEntry->uvmap;
         return cacheEntry->instance;
@@ -1837,6 +1792,11 @@ FilamentAsset* AssetLoader::createInstancedAsset(const uint8_t* bytes, uint32_t 
 
 FilamentInstance* AssetLoader::createInstance(FilamentAsset* asset) {
     return downcast(this)->createInstance(downcast(asset));
+}
+
+FilamentInstance* AssetLoader::createInstance(FilamentAsset* asset,
+        FilamentInstance const* shareMaterialsWith) {
+    return downcast(this)->createInstance(downcast(asset), downcast(shareMaterialsWith));
 }
 
 void AssetLoader::enableDiagnostics(bool enable) {

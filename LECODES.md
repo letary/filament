@@ -43,6 +43,7 @@ git show <sha>                                            # one change with its 
 | 0022 | ktxreader + gltfio | texture size cap: `Ktx2Reader::setMaxTextureSize` skips top mip levels, gltfio `setDefaultMaxTextureSize` downsamples stb images (the texture-quality setting) |
 | 0023 | Vulkan | device extensions + features for a guest renderer on the shared device (sokol-gfx: descriptor buffer, descriptor indexing, buffer device address, synchronization2, copy commands 2); `filament_vk_guestBindingFeatures()` |
 | 0024 | gltfio | ubershader archive order: `specular_*` before `transmission_*`/`volume_*` — a KHR_materials_specular-only material no longer takes the refractive transmission ubershader (SSR mip pyramid + second colour pass every frame) |
+| 0025 | gltfio | `AssetLoader::createInstance(asset, donor)`: a new instance shares the donor's material instances (the `MaterialInstanceCache` is kept on the instance, sharers never destroy the list) — a scene-file level of 9 000 prefab copies no longer costs a material instance (UBO + descriptor set) per copy |
 
 ## Adding a change
 

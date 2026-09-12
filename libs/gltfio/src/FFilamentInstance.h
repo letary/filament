@@ -18,6 +18,7 @@
 #define GLTFIO_FFILAMENTINSTANCE_H
 
 #include "downcast.h"
+#include "MaterialInstanceCache.h"
 
 #include <gltfio/FilamentInstance.h>
 
@@ -108,6 +109,12 @@ struct FFilamentInstance : public FilamentInstance {
     Aabb mBoundingBox;
 
     utils::FixedCapacityVector<MaterialInstance*> mMaterialInstances;
+
+    // lecodes 0025: the cache this instance was built with, kept so a later
+    // AssetLoader::createInstance(asset, this) reuses its material instances; false when THIS
+    // instance is such a sharer (the list above is then borrowed and never destroyed here).
+    MaterialInstanceCache mMaterialInstanceCache;
+    bool mOwnsMaterialInstances = true;
 
     // lecodes 0019: bone matrices are computed once per (skin joints + inverse bind matrices, target
     // world transform) and shared by every target that matches — a modular character exported as
