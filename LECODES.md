@@ -52,6 +52,7 @@ first published is `lecodes-1.75.1`.
 | 0023 | Vulkan | device extensions + features for a guest renderer on the shared device (sokol-gfx: descriptor buffer, descriptor indexing, buffer device address, synchronization2, copy commands 2); `filament_vk_guestBindingFeatures()` |
 | 0024 | gltfio | ubershader archive order: `specular_*` before `transmission_*`/`volume_*` — a KHR_materials_specular-only material no longer takes the refractive transmission ubershader (SSR mip pyramid + second colour pass every frame) |
 | 0025 | gltfio | `AssetLoader::createInstance(asset, donor)`: a new instance shares the donor's material instances (the `MaterialInstanceCache` is kept on the instance, sharers never destroy the list) — a scene-file level of 9 000 prefab copies no longer costs a material instance (UBO + descriptor set) per copy |
+| 0027 | backend/opengl | desktop shader-compiler pool: 2–4 threads on Windows / Linux (was 1, "tbd" upstream) and 6 WGL worker contexts (was 2), bound under a lock with retries — the pool's threads all `wglMakeCurrent()` through the one dummy-window DC, a GDI DC is not thread-safe, and two racing binds failed at random (the desktop host's start-up flake "Failed to make current"); a `Material::compile()` batch (the LeCodes shader precompile) finishes in a fraction of the time (absorbs 0032) |
 
 ## Adding a change
 

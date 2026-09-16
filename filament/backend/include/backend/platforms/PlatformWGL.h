@@ -66,8 +66,9 @@ protected:
     PIXELFORMATDESCRIPTOR mPfd = {};
     std::vector<int> mAttribs;
 
-    // For shared contexts
-    static constexpr int SHARED_CONTEXT_NUM = 2;
+    // For shared contexts. lecodes 0027: up to 4 shader-compiler threads (ShaderCompilerService) +
+    // the asynchronous-mode job worker + one spare, was 2.
+    static constexpr int SHARED_CONTEXT_NUM = 6;
     mutable utils::Mutex mAdditionalContextsLock;
     std::vector<HGLRC> mAdditionalContexts UTILS_GUARDED_BY(mAdditionalContextsLock);
     std::atomic<int> mNextFreeSharedContextIndex{0};

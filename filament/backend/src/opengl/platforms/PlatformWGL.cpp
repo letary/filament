@@ -294,16 +294,41 @@ bool PlatformWGL::isExtraContextSupported() const noexcept {
 
 void PlatformWGL::createContext(bool shared) {
     int nextIndex = mNextFreeSharedContextIndex.fetch_add(1, std::memory_order_relaxed);
-    FILAMENT_CHECK_PRECONDITION(nextIndex < SHARED_CONTEXT_NUM)
-            << "Shared context index out of range. Increase SHARED_CONTEXT_NUM.";
 
     HGLRC context;
+    size_t available;
     {
         utils::LockGuard const lock(mAdditionalContextsLock);
-        context = mAdditionalContexts[nextIndex];
+        // lecodes 0027: bound by the contexts that were actually created (a worker context that failed
+        // in createDriver is skipped there), not by the compile-time constant.
+        available = mAdditionalContexts.size();
+        context = size_t(nextIndex) < available ? mAdditionalContexts[nextIndex] : NULL;
     }
-    BOOL result = wglMakeCurrent(mWhdc, context);
-    FILAMENT_CHECK_POSTCONDITION(result) << "Failed to make current.";
+    FILAMENT_CHECK_PRECONDITION(context != NULL)
+            << "Shared context index " << nextIndex << " out of range (" << available
+            << " worker contexts created, SHARED_CONTEXT_NUM = " << SHARED_CONTEXT_NUM
+            << "). More threads ask for a GL context than the platform prepared.";
+    // lecodes 0032: the compiler pool starts several threads at once and they all bind through the ONE
+    // dummy-window DC. A GDI DC is not thread-safe: two wglMakeCurrent() racing on it fail at random
+    // ("Failed to make current" on some launches only). Serialize the bind, and retry a few times for
+    // the case where the driver thread is inside its own wglMakeCurrent() at that moment.
+    static utils::Mutex sMakeCurrentLock;
+    BOOL result = FALSE;
+    DWORD dwError = 0;
+    for (int attempt = 0; attempt < 20 && !result; ++attempt) {
+        {
+            utils::LockGuard const lock(sMakeCurrentLock);
+            result = wglMakeCurrent(mWhdc, context);
+            if (!result) dwError = GetLastError();
+        }
+        if (!result) {
+            LOG(WARNING) << "PlatformWGL: wglMakeCurrent() failed for worker context " << nextIndex
+                         << " (Windows error " << dwError << "), attempt " << attempt + 1;
+            Sleep(5);
+        }
+    }
+    FILAMENT_CHECK_POSTCONDITION(result) << "Failed to make current (worker context " << nextIndex
+            << ", Windows error " << dwError << ").";
 }
 
 void PlatformWGL::terminate() noexcept {
