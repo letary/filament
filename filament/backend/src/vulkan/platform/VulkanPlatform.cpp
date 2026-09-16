@@ -1175,6 +1175,17 @@ void VulkanPlatform::createLogicalDeviceAndQueues(const ExtensionSet& deviceExte
         chainStruct(&deviceCreateInfo, &dynamicRendering);
     }
 
+    // lecodes 0028: the extension was requested but its FEATURE never enabled, so a pipeline that
+    // declares VK_DYNAMIC_STATE_VERTEX_INPUT_EXT (the pipeline-cache prewarming path) was invalid
+    // usage on every device — whether it built or failed was up to the driver.
+    VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT vertexInputDynamicState = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT,
+        .vertexInputDynamicState = VK_TRUE,
+    };
+    if (setContains(deviceExtensions, VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME)) {
+        chainStruct(&deviceCreateInfo, &vertexInputDynamicState);
+    }
+
     VkPhysicalDevicePortabilitySubsetFeaturesKHR portability = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_FEATURES_KHR,
         .imageViewFormatSwizzle = VK_TRUE,

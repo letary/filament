@@ -33,7 +33,10 @@
 
 #include <tsl/robin_map.h>
 
+#include <atomic>
+#include <mutex>
 #include <type_traits>
+#include <vector>
 
 namespace filament::backend {
 
@@ -270,6 +273,53 @@ private:
     CallbackManager mCallbackManager;
 
     [[maybe_unused]] VulkanContext const& mContext;
+
+    // lecodes 0028: the numbers behind a first-frame hitch — pipelines built AT DRAW TIME (cache
+    // misses) per flush and in total, and what the prewarming thread managed. Logged from gc() for
+    // a flush that built any, and from terminate().
+    std::atomic<uint32_t> mPrewarmBuilt{0};
+    std::atomic<uint32_t> mPrewarmFailed{0};
+    // lecodes 0028: pipeline CLASSES = a real draw-time key minus its program (shaders, layout),
+    // recorded on every cache miss. A new program is prewarmed against the fresh classes with the
+    // exact pipeline the draw will ask for (static vertex input, the real render pass, the real
+    // raster state), and the finished pipeline is handed to the draw thread (mPrewarmed -> gc())
+    // instead of thrown away — so the draw finds it in mPipelines and never asks the driver, no
+    // matter how the driver keys its own cache. Upstream's stand-in pipeline (dynamic rendering,
+    // dynamic vertex input, a made-up raster state) never produced a hit on NVIDIA: measured 87–90
+    // prewarmed pipelines, the same 20 first-draw pipelines at 330–400 ms with it on or off.
+    // A class is used only while its render pass is certainly alive: seen within CLASS_FRESH_FLUSHES
+    // (VulkanFboCache evicts a render pass after far longer), refreshed on hits by handle.
+    struct PipelineClass {
+        PipelineKey key;       // shaders + layout zeroed
+        Timestamp lastSeen;
+        std::vector<VkPipelineLayout> layouts;   // the pipeline layouts drawn with this class
+    };
+    static constexpr size_t MAX_CLASSES = 32;
+    static constexpr Timestamp CLASS_FRESH_FLUSHES = 30;   // < VulkanFboCache TIME_BEFORE_EVICTION (45)
+    std::vector<PipelineClass> mClasses;
+    void recordClass(PipelineKey const& real) noexcept;
+    // Every program the frontend created, with its pipeline layout: a class first drawn with that
+    // layout prewarms all of them (the muzzle-flash / explosion variants are created at LOAD, before
+    // any class exists — they must be picked up when the classes appear). A destroyed program is
+    // dropped at the next scan (cancelParallelCompilation marks it).
+    struct LiveProgram {
+        resource_ptr<VulkanProgram> program;
+        VkPipelineLayout layout;
+    };
+    std::vector<LiveProgram> mPrograms;
+    void prewarmClass(PipelineClass const& cls, resource_ptr<VulkanProgram> const& vprogram,
+            VkPipelineLayout layout, CompilerPriorityQueue priority);
+    struct PrewarmedPipeline {
+        PipelineKey key;
+        VkPipeline handle;
+    };
+    std::mutex mPrewarmedLock;
+    std::vector<PrewarmedPipeline> mPrewarmed;   // built on the pool thread, adopted in gc()
+    uint32_t mPrewarmAdopted = 0;
+    uint32_t mFlushMisses = 0;
+    double mFlushMissMs = 0.0;
+    uint32_t mTotalMisses = 0;
+    double mTotalMissMs = 0.0;
 
     // Name of the bound program, used for perfetto tracing.
     utils::CString mBoundProgram;

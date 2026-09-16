@@ -46,6 +46,7 @@ git show <sha>                                            # one change with its 
 | 0025 | gltfio | `AssetLoader::createInstance(asset, donor)`: a new instance shares the donor's material instances (the `MaterialInstanceCache` is kept on the instance, sharers never destroy the list) — a scene-file level of 9 000 prefab copies no longer costs a material instance (UBO + descriptor set) per copy |
 | 0026 | backend/opengl | BPTC support test accepts `GL_ARB_texture_compression_bptc` (what desktop drivers report; the EXT spelling is ES-only) — BC7 KTX2 pages and the BC6H HDR lightmap were falling through to ETC2 / DXT5 on desktop GL |
 | 0027 | backend/opengl | desktop shader-compiler pool: 2–4 threads on Windows / Linux (was 1, "tbd" upstream) and 6 WGL worker contexts (was 2) — a `Material::compile()` batch (the LeCodes shader precompile) finishes in a fraction of the time |
+| 0028 | backend/vulkan | pipeline-cache prewarming that works: programs are prewarmed against the real pipeline CLASSES seen at draw time (key minus program), the finished pipelines adopted into the draw-time map, a program registry re-prewarms on new classes, `VK_EXT_vertex_input_dynamic_state`'s feature is actually enabled, and the decision + every costly draw-time build are logged — upstream's stand-in pipeline (dynamic rendering, undefined formats, writes masked) never produced a driver-cache hit on NVIDIA |
 
 ## Adding a change
 

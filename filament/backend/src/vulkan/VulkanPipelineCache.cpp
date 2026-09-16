@@ -26,6 +26,8 @@
 #include <utils/compiler.h>
 #include <utils/JobSystem.h>
 #include <utils/Log.h>
+
+#include <chrono>
 #include <utils/Panic.h>
 #if defined(__clang__)
 // Vulkan functions often immediately dereference pointers, so it's fine to pass in a pointer
@@ -81,6 +83,15 @@ VulkanPipelineCache::VulkanPipelineCache(DriverBase& driver, VkDevice device, Vu
     };
     bluevk::vkCreatePipelineCache(mDevice, &createInfo, VKALLOC, &mPipelineCache);
 
+    // lecodes 0028: say which way the prewarming decision went — it is silent otherwise, and its
+    // three inputs (feature flag, vertex-input dynamic state, dynamic rendering) all fail quietly.
+    FVK_LOGI << "VulkanPipelineCache: pipeline prewarming "
+             << (mContext.shouldUsePipelineCachePrewarming() ? "ON" : "OFF")
+             << " (flag " << mContext.asyncPipelineCachePrewarmingEnabled()
+             << ", vertexInputDynamicState " << mContext.isVertexInputDynamicStateSupported()
+             << ", dynamicRendering " << mContext.isDynamicRenderingSupported()
+             << ", parallelCompileDisabled " << mContext.parallelShaderCompilationDisabled() << ")";
+
     if (mContext.shouldUsePipelineCachePrewarming()) {
         mCompilerThreadPool.init(
             /*threadCount=*/1,
@@ -106,16 +117,110 @@ VulkanPipelineCache::PipelineCacheEntry* VulkanPipelineCache::getOrCreatePipelin
         pipeline.lastUsed = mCurrentTime;
         FILAMENT_TRACING_EVENT(FILAMENT_TRACING_CATEGORY_FILAMENT,
                 "Pipeline(Hit)", "program", mBoundProgram.c_str_safe());
+        // lecodes 0028: keep the classes drawn with this render pass fresh (handle compare only).
+        for (auto& c : mClasses) {
+            if (c.key.renderPass == mPipelineRequirements.renderPass) c.lastSeen = mCurrentTime;
+        }
         return &pipeline;
     }
     FILAMENT_TRACING_EVENT(FILAMENT_TRACING_CATEGORY_FILAMENT,
             "Pipeline(Miss)", "program", mBoundProgram.c_str_safe());
+    auto const t0 = std::chrono::steady_clock::now();
     PipelineCacheEntry cacheEntry {
         .handle = createPipeline(mPipelineRequirements),
         .lastUsed = mCurrentTime,
     };
+    double const ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - t0).count();
+    ++mFlushMisses; mFlushMissMs += ms;
+    ++mTotalMisses; mTotalMissMs += ms;
+    recordClass(mPipelineRequirements);
+    if (ms >= 5.0) {
+        // One line per draw-time build that cost real time: which program, how long, and the state
+        // class that decides whether a prewarm pipeline could have been a driver-cache hit for it.
+        auto const& rs = mPipelineRequirements.rasterState;
+        FVK_LOGI << "VulkanPipelineCache: built \"" << mBoundProgram.c_str_safe() << "\" in " << ms
+                 << " ms (fs " << (mPipelineRequirements.shaders[1] != VK_NULL_HANDLE)
+                 << ", blend " << (int) rs.blendEnable << ", depthWrite " << (int) rs.depthWriteEnable
+                 << ", writeMask " << (int) rs.colorWriteMask << ", cull " << (int) rs.cullMode
+                 << ", targets " << (int) rs.colorTargetCount << ", samples " << (int) rs.rasterizationSamples
+                 << ")";
+    }
     assert_invariant(cacheEntry.handle != VK_NULL_HANDLE && "Pipeline handle is VK_NULL_HANDLE");
     return &mPipelines.emplace(mPipelineRequirements, cacheEntry).first.value();
+}
+
+void VulkanPipelineCache::recordClass(PipelineKey const& real) noexcept {
+    PipelineKey k = real;
+    k.shaders[0] = VK_NULL_HANDLE;
+    k.shaders[1] = VK_NULL_HANDLE;
+    k.layout = VK_NULL_HANDLE;
+    static PipelineEqual const equal;
+    PipelineClass* cls = nullptr;
+    for (auto& c : mClasses) {
+        if (equal(c.key, k)) { cls = &c; break; }
+    }
+    if (cls == nullptr) {
+        if (mClasses.size() < MAX_CLASSES) {
+            mClasses.push_back({ k, mCurrentTime, {} });
+            cls = &mClasses.back();
+        } else {
+            // Full: the least recently seen class gives way.
+            auto oldest = mClasses.begin();
+            for (auto it = mClasses.begin(); it != mClasses.end(); ++it) {
+                if (it->lastSeen < oldest->lastSeen) oldest = it;
+            }
+            *oldest = { k, mCurrentTime, {} };
+            cls = &*oldest;
+        }
+    }
+    cls->lastSeen = mCurrentTime;
+    for (auto l : cls->layouts) {
+        if (l == real.layout) return;   // a known pairing: nothing new to prewarm
+    }
+    cls->layouts.push_back(real.layout);
+
+    // This class was just drawn with this layout for the first time: every live program of the
+    // same layout gets its pipeline for it now, in the background — except the one that just
+    // built it at draw time.
+    for (size_t i = mPrograms.size(); i-- > 0;) {
+        auto const& p = mPrograms[i];
+        if (p.program->isParallelCompilationCanceled()) {
+            mPrograms.erase(mPrograms.begin() + i);
+            continue;
+        }
+        if (p.layout != real.layout) continue;
+        if (p.program->getVertexShader() == real.shaders[0]
+                && p.program->getFragmentShader() == real.shaders[1]) continue;
+        prewarmClass(*cls, p.program, p.layout, CompilerPriorityQueue::LOW);
+    }
+}
+
+void VulkanPipelineCache::prewarmClass(PipelineClass const& cls,
+        resource_ptr<VulkanProgram> const& vprogram, VkPipelineLayout layout,
+        CompilerPriorityQueue priority) {
+    PipelineKey k = cls.key;
+    k.shaders[0] = vprogram->getVertexShader();
+    k.shaders[1] = vprogram->getFragmentShader();
+    k.layout = layout;
+    if (mPipelines.find(k) != mPipelines.end()) return;
+
+    CallbackManager::Handle cmh = mCallbackManager.get();
+    auto token = std::make_shared<ProgramToken>();
+    // vprogram is held by the job so the shader modules outlive createPipeline (as upstream does).
+    mCompilerThreadPool.queue(priority, token, [this, vprogram, k, cmh]() mutable {
+        if (!vprogram->isParallelCompilationCanceled()) {
+            VkPipeline pipeline = createPipeline(k, {});
+            if (pipeline != VK_NULL_HANDLE) {
+                std::lock_guard<std::mutex> const lock(mPrewarmedLock);
+                mPrewarmed.push_back({ k, pipeline });
+                mPrewarmBuilt.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                mPrewarmFailed.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        mCallbackManager.put(cmh);
+    });
 }
 
 void VulkanPipelineCache::bindPipeline(VulkanCommandBuffer* commands) {
@@ -151,25 +256,30 @@ void VulkanPipelineCache::asyncPrewarmCache(
         // We're using vertex input dynamic state, so these should be empty.
         .vertexAttributes = {},
         .vertexBuffers = {},
-        // Create a reasonable default raster state; we're assuming this is not cached.
+        // lecodes 0028: the stand-in raster state is the COMMON OPAQUE one — colour writes on, depth
+        // test + write, back-face culling — instead of upstream's "write nothing" state. Measured on
+        // NVIDIA 616 (cold driver cache): with colorWriteMask 0 / no depth write the driver compiled
+        // 87 prewarm pipelines and the 20 first-draw pipelines still cost 400 ms (394 ms with the
+        // prewarm off) — a fragment shader whose outputs are masked is dead-code-eliminated into a
+        // different binary, so nothing the prewarm built was ever a cache hit.
         .rasterState = {
-            .cullMode = VK_CULL_MODE_NONE,
+            .cullMode = VK_CULL_MODE_BACK_BIT,
             .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
             .depthBiasEnable = VK_FALSE,
             .blendEnable = VK_FALSE,
-            .depthWriteEnable = VK_FALSE,
+            .depthWriteEnable = VK_TRUE,
             .alphaToCoverageEnable = VK_FALSE,
             .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
-            .dstColorBlendFactor = VK_BLEND_FACTOR_ONE,
+            .dstColorBlendFactor = VK_BLEND_FACTOR_ZERO,
             .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
-            .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
-            .colorWriteMask = 0,
+            .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+            .colorWriteMask = 0xf,
             .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
             .depthClamp = VK_FALSE,
             .colorTargetCount = 1,
-            .colorBlendOp = BlendEquation::SUBTRACT,
-            .alphaBlendOp = BlendEquation::SUBTRACT,
-            .depthCompareOp = SamplerCompareFunc::L,
+            .colorBlendOp = BlendEquation::ADD,
+            .alphaBlendOp = BlendEquation::ADD,
+            .depthCompareOp = SamplerCompareFunc::GE,
             .depthBiasConstantFactor = 0.f,
             .depthBiasSlopeFactor = 0.f,
         },
@@ -182,6 +292,39 @@ void VulkanPipelineCache::asyncPrewarmCache(
         .stereoscopicType = stereoscopicType,
         .stereoscopicViewCount = stereoscopicViewCount,
     };
+
+    // lecodes 0028: the REAL pipelines this program will be asked for — every fresh class (the
+    // draw-time keys seen so far, minus their program) with this program's shaders and layout,
+    // built exactly as the draw would (static vertex input, real render pass) and adopted into
+    // mPipelines by gc(). Falls back to upstream's stand-in pipeline while no class exists yet
+    // (programs created before the first frame).
+    bool registered = false;
+    for (auto const& p : mPrograms) {
+        if (p.program.get() == vprogram.get()) { registered = true; break; }
+    }
+    if (!registered) mPrograms.push_back({ vprogram, layout });
+    size_t matched = 0;
+    for (auto const& c : mClasses) {
+        if (c.lastSeen + CLASS_FRESH_FLUSHES < mCurrentTime) continue;
+        bool sameLayout = false;
+        for (auto l : c.layouts) if (l == layout) { sameLayout = true; break; }
+        if (!sameLayout) continue;
+        prewarmClass(c, vprogram, layout, priority);
+        ++matched;
+    }
+    if (matched == 0 && !mClasses.empty()) {
+        // A layout no class was drawn with yet — a new KIND of material (the first particle
+        // material, say). Its exact pipeline cannot be known, but the driver caches per shader
+        // binary under the real render pass: measured on NVIDIA, the same program under another
+        // cull / blend state costs microseconds once one real pipeline exists. So build it under
+        // every fresh class; the draw's own key then hits the driver, not the compiler.
+        for (auto const& c : mClasses) {
+            if (c.lastSeen + CLASS_FRESH_FLUSHES < mCurrentTime) continue;
+            prewarmClass(c, vprogram, layout, priority);
+            ++matched;
+        }
+    }
+    if (matched > 0) return;
 
     CallbackManager::Handle cmh = mCallbackManager.get();
     auto token = std::make_shared<ProgramToken>();
@@ -197,6 +340,7 @@ void VulkanPipelineCache::asyncPrewarmCache(
                     "priority", static_cast<uint32_t>(priorityQueue));
             if (vprogram->isParallelCompilationCanceled()) {
                 FVK_LOGD << "Skipping prewarm for a program that has been destroyed already.";
+                mCallbackManager.put(cmh);
                 return;
             }
 
@@ -206,7 +350,9 @@ void VulkanPipelineCache::asyncPrewarmCache(
             // driver to cache the pipeline's information.
             if (pipeline != VK_NULL_HANDLE) {
                 vkDestroyPipeline(mDevice, pipeline, VKALLOC);
+                mPrewarmBuilt.fetch_add(1, std::memory_order_relaxed);
             } else {
+                mPrewarmFailed.fetch_add(1, std::memory_order_relaxed);
                 FVK_LOGW << "Failed to create a pipeline during prewarming, draw-time pipeline "
                             "creation may fail.";
             }
@@ -520,6 +666,20 @@ void VulkanPipelineCache::terminate() noexcept {
     mCallbackManager.terminate();
     mCompilerThreadPool.terminate();
 
+    mPrograms.clear();   // the registry's program refs, before the resource manager goes
+    mClasses.clear();
+
+    // Prewarmed pipelines nobody adopted (the pool finished after the last gc()).
+    {
+        std::lock_guard<std::mutex> const lock(mPrewarmedLock);
+        for (auto const& p : mPrewarmed) vkDestroyPipeline(mDevice, p.handle, VKALLOC);
+        mPrewarmed.clear();
+    }
+
+    FVK_LOGI << "VulkanPipelineCache: " << mTotalMisses << " pipelines built at draw time ("
+             << mTotalMissMs << " ms), prewarmed " << mPrewarmBuilt.load() << " (adopted "
+             << mPrewarmAdopted << ", failed " << mPrewarmFailed.load() << ")";
+
     vkDestroyPipelineCache(mDevice, mPipelineCache, VKALLOC);
 }
 
@@ -529,6 +689,46 @@ void VulkanPipelineCache::gc() noexcept {
     // FVK_MAX_PIPELINE_AGE flush events in the past, then we can be sure that it is no longer
     // being used by the GPU, and is therefore safe to destroy or reclaim.
     ++mCurrentTime;
+
+    // lecodes 0028: a class not drawn for CLASS_FRESH_FLUSHES goes — its render pass may be evicted
+    // by the FBO cache soon, and a prewarm job must never be handed a dead one.
+    for (size_t i = 0; i < mClasses.size();) {
+        if (mClasses[i].lastSeen + CLASS_FRESH_FLUSHES < mCurrentTime) {
+            mClasses[i] = mClasses.back();
+            mClasses.pop_back();
+        } else {
+            ++i;
+        }
+    }
+
+    // lecodes 0028: adopt the pipelines the prewarm thread built against real classes — the draw
+    // finds them in mPipelines and never builds one. A duplicate (the draw got there first) is freed.
+    {
+        std::vector<PrewarmedPipeline> ready;
+        {
+            std::lock_guard<std::mutex> const lock(mPrewarmedLock);
+            ready.swap(mPrewarmed);
+        }
+        for (auto const& p : ready) {
+            if (mPipelines.find(p.key) == mPipelines.end()) {
+                mPipelines.emplace(p.key, PipelineCacheEntry{ p.handle, mCurrentTime });
+                ++mPrewarmAdopted;
+            } else {
+                vkDestroyPipeline(mDevice, p.handle, VKALLOC);
+            }
+        }
+    }
+
+    // lecodes 0028: a flush that built pipelines at draw time is where a hitch comes from — say so
+    // with the count and the cost (a prewarmed program's pipeline is meant to be a cache hit here).
+    if (mFlushMisses > 0) {
+        FVK_LOGI << "VulkanPipelineCache: flush " << mCurrentTime << " built " << mFlushMisses
+                 << " pipelines at draw time in " << mFlushMissMs << " ms (prewarmed so far "
+                 << mPrewarmBuilt.load() << ", adopted " << mPrewarmAdopted << ", failed "
+                 << mPrewarmFailed.load() << ", classes " << mClasses.size() << ")";
+        mFlushMisses = 0;
+        mFlushMissMs = 0.0;
+    }
 
     // The Vulkan spec says: "When a command buffer begins recording, all state in that command
     // buffer is undefined." Therefore, we need to clear all bindings at this time.
