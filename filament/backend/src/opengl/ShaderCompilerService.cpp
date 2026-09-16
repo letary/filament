@@ -286,6 +286,16 @@ void ShaderCompilerService::init() noexcept {
             poolSize = (std::thread::hardware_concurrency() + 1) / 2;
             priority = JobSystem::Priority::BACKGROUND;
         }
+#if (defined(_WIN32) || defined(__linux__)) && !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
+        else {
+            // lecodes 0027: desktop GL drivers (NVIDIA / AMD / Intel / Mesa) compile and link in
+            // parallel across shared contexts, and one thread made a Material::compile() batch of
+            // a few hundred programs take seconds. Bounded by PlatformWGL::SHARED_CONTEXT_NUM on
+            // Windows (the worker contexts are created up front on the main thread there).
+            poolSize = std::clamp((std::thread::hardware_concurrency() + 1) / 2, 2u, 4u);
+            priority = JobSystem::Priority::BACKGROUND;
+        }
+#endif
 
         mShaderCompilerThreadCount = poolSize;
         mCompilerThreadPriority = priority;
