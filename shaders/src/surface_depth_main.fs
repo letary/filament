@@ -99,3 +99,8 @@ highp vec4 computeDepthMomentsVSM(const highp float depth) {
 }
 
 #endif
+
+// lecodes 0030 (surface_getters.fs): no shadow map in a depth pass
+float getSunShadowVisibility() {
+    return 1.0;
+}

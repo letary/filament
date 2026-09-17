@@ -132,3 +132,24 @@ void main() {
     FRAG_OUTPUT_AT0 = inputs.FRAG_OUTPUT0;
 #endif
 }
+
+// lecodes 0030 (surface_getters.fs)
+float getSunShadowVisibility() {
+    float visibility = 1.0;
+#if defined(VARIANT_HAS_SHADOWING) && defined(VARIANT_HAS_DIRECTIONAL_LIGHTING)
+    int cascade = getShadowCascade();
+    bool cascadeHasVisibleShadows = bool(frameUniforms.cascades & ((1 << cascade) << 8));
+    bool hasDirectionalShadows = bool(frameUniforms.directionalShadows & 1);
+    if (hasDirectionalShadows && cascadeHasVisibleShadows) {
+        highp vec4 shadowPosition = getShadowPosition(cascade);
+        visibility = shadow(true, sampler0_shadowMap, cascade, shadowPosition, 0.0);
+#if defined (FILAMENT_SHADOW_FAR_ATTENUATION)
+        highp vec3 v = getWorldPosition() - getWorldCameraPosition();
+        highp float z = dot(transpose(getViewFromWorldMatrix())[2].xyz, v);
+        highp vec2 p = frameUniforms.shadowFarAttenuationParams;
+        visibility = 1.0 - ((1.0 - visibility) * saturate(p.x - z * z * p.y));
+#endif
+    }
+#endif
+    return visibility;
+}
