@@ -1553,7 +1553,10 @@ MaterialInstance* FAssetLoader::createMaterialInstance(const cgltf_material* inp
 
     const float* emissive = &inputMat->emissive_factor[0];
     float3 emissiveFactor(emissive[0], emissive[1], emissive[2]);
-    if (inputMat->has_emissive_strength) {
+    // lecodes 0033: KHR_materials_emissive_strength was applied TWICE - folded into emissiveFactor here AND handed to
+    // the material as emissiveStrength below, which the ubershader multiplies in again (strength 10 drew as 100).
+    // Fold it only for a material that has no emissiveStrength parameter of its own.
+    if (inputMat->has_emissive_strength && !mi->getMaterial()->hasParameter("emissiveStrength")) {
         emissiveFactor *= inputMat->emissive_strength.emissive_strength;
     }
     mi->setParameter("emissiveFactor", emissiveFactor);
