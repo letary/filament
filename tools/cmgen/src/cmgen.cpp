@@ -36,11 +36,13 @@
 #include <math/scalar.h>
 #include <math/vec4.h>
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <vector>
 
 #include <string.h>
 
@@ -84,6 +86,7 @@ static bool g_sh_shader = false;
 static bool g_sh_irradiance = false;
 static float g_sh_window = 0.0f; // <0 none, 0=auto, or cutoff
 static bool g_noclamp = true;
+static float g_clamp_sun = 0.0f;   // lecodes 0031: degrees around the brightest texel, 0 = off
 static ShFile g_sh_file = ShFile::SH_NONE;
 static utils::Path g_sh_filename;
 static std::unique_ptr<filament::math::float3[]> g_sh_coefficients;
@@ -190,6 +193,10 @@ static void printUsage(char* name) {
             "       Blurs the cubemap before saving the faces using the roughness blur\n\n"
             "   --clamp\n"
             "       Clamp environment before processing\n\n"
+            "   --clamp-sun[=degrees]\n"
+            "       lecodes 0031: take the SUN out of an equirectangular environment - inside <degrees> (default 8) of\n"
+            "       its brightest texel nothing stays brighter than the sky around it. For a lighting probe next to a\n"
+            "       directional sun: the sun in the probe is the same light a second time, from everywhere, shadowless\n\n"
             "   --no-mirror\n"
             "       Skip mirroring of generated cubemaps (for assets with mirroring already backed in)\n\n"
             "   --ibl-samples=numSamples\n"
@@ -261,6 +268,7 @@ static int handleCommandLineArgments(int argc, char* argv[]) {
             { "sh-shader",                  utils::getopt::no_argument, nullptr, 'b' },
             { "sh-window",            utils::getopt::required_argument, nullptr, 'w' },
             { "clamp",                      utils::getopt::no_argument, nullptr, 'K' },
+            { "clamp-sun",            utils::getopt::optional_argument, nullptr, 'U' },
             { "ibl-is-mipmap",        utils::getopt::required_argument, nullptr, 'y' },
             { "ibl-ld",               utils::getopt::required_argument, nullptr, 'p' },
             { "ibl-irradiance",       utils::getopt::required_argument, nullptr, 'P' },
@@ -392,6 +400,9 @@ static int handleCommandLineArgments(int argc, char* argv[]) {
                 break;
             case 'K':
                 g_noclamp = false;
+                break;
+            case 'U':
+                g_clamp_sun = arg.empty() ? 8.0f : std::stof(arg);
                 break;
             case 'i':
                 g_sh_compute = 1;
@@ -555,6 +566,47 @@ int main(int argc, char* argv[]) {
 
         if (!g_noclamp) {
             CubemapUtils::clamp(inputImage);
+        }
+
+        // lecodes 0031: --clamp-sun (equirectangular input only)
+        if (g_clamp_sun > 0.0f && width == 2 * height) {
+            auto luma = [](float3 const& c) { return dot(c, float3{ 0.2126f, 0.7152f, 0.0722f }); };
+            auto dirOf = [&](size_t x, size_t y) {
+                const float phi = (float(x) + 0.5f) / float(width) * 2.0f * float(F_PI);
+                const float theta = (float(y) + 0.5f) / float(height) * float(F_PI);
+                return float3{ std::sin(theta) * std::cos(phi), std::cos(theta), std::sin(theta) * std::sin(phi) };
+            };
+            size_t sx = 0, sy = 0; float peak = -1.0f;
+            for (size_t y = 0; y < height; ++y) for (size_t x = 0; x < width; ++x) {
+                const float l = luma(*static_cast<float3*>(inputImage.getPixelRef(x, y)));
+                if (l > peak) { peak = l; sx = x; sy = y; }
+            }
+            const float3 sun = dirOf(sx, sy);
+            const float cosIn = std::cos(g_clamp_sun * float(F_PI) / 180.0f);
+            const float cosOut = std::cos(g_clamp_sun * 1.5f * float(F_PI) / 180.0f);
+            // the sky's level = the median luminance of the ring just outside
+            std::vector<float> ring;
+            for (size_t y = 0; y < height; ++y) for (size_t x = 0; x < width; ++x) {
+                const float d = dot(dirOf(x, y), sun);
+                if (d < cosIn && d > cosOut) ring.push_back(luma(*static_cast<float3*>(inputImage.getPixelRef(x, y))));
+            }
+            if (!ring.empty()) {
+                std::nth_element(ring.begin(), ring.begin() + ring.size() / 2, ring.end());
+                const float level = ring[ring.size() / 2];
+                double before = 0.0, after = 0.0, disc = 0.0;
+                const double texel = (F_PI / double(height)) * (2.0 * F_PI / double(width));   // x sin(theta) = its solid angle
+                for (size_t y = 0; y < height; ++y) for (size_t x = 0; x < width; ++x) {
+                    float3& c = *static_cast<float3*>(inputImage.getPixelRef(x, y));
+                    const float w = std::sin((float(y) + 0.5f) / float(height) * float(F_PI));
+                    const float l = luma(c);
+                    before += l * w;
+                    if (l > level && dot(dirOf(x, y), sun) >= cosIn) { disc += double(l - level) * w * texel; c *= level / l; }
+                    after += luma(c) * w;
+                }
+                std::cout << "Sun clamped: peak " << peak << " -> " << level << " within " << g_clamp_sun
+                          << " deg, the environment keeps " << (after / before * 100.0) << " % of its energy, the disc's illuminance "
+                          << disc << " (what was taken out, facing it, in the picture's units)" << std::endl;
+            }
         }
 
         if ((isPOT(width) && (width * 3 == height * 4)) ||
