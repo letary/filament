@@ -747,6 +747,22 @@ public:
     void setLightChannel(Instance instance, unsigned int channel, bool enable) noexcept;
 
     /**
+     * lecodes 0029: BAKED AMBIENT LIGHT per renderable. `cube` = six irradiances in lux (rgb; .w unused) for a
+     * surface facing +x, -x, +y, -y, +z, -z at the object's place - a light baker's ambient cube. While set, every lit
+     * material on this renderable takes its DIFFUSE indirect light from the cube (weighed by the squares of the normal's
+     * components) instead of the scene's IBL, and its SPECULAR indirect light (the IBL's reflections) is multiplied by
+     * `skyVisibility` (0 = a room, 1 = under the open sky). `sunVisibility` multiplies the DIRECTIONAL light on it (the
+     * baked statics' shadow at its place: they then need not cast in real time, the shadow map holds the movers only;
+     * 1 = leave the sun alone). Other dynamic lights and the shadow map are untouched. Cheap to call every frame (a
+     * mover sampling a baked light grid). Feature level 1 and up.
+     */
+    void setAmbientCube(Instance instance, math::float4 const* UTILS_NONNULL cube, float skyVisibility,
+            float sunVisibility = 1.0f) noexcept;
+
+    /** lecodes 0029: back to the scene's IBL. */
+    void clearAmbientCube(Instance instance) noexcept;
+
+    /**
      * Returns whether a light channel is enabled on a specified renderable.
      * @param instance Instance of the component obtained from getInstance().
      * @param channel  Light channel to query

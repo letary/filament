@@ -798,6 +798,7 @@ void FRenderableManager::destroyComponents(Entity const* entities, size_t const 
         Entity const e = entities[k];
         if (Instance const ci = getInstance(e)) {
             destroyComponent(ci, driver);
+            mAmbientCubes.erase(e);   // lecodes 0029
             manager.removeComponent(e);
         }
     }
@@ -1137,6 +1138,20 @@ size_t FRenderableManager::getMorphTargetCount(Instance const instance) const no
         return morphWeights.count;
     }
     return 0;
+}
+
+// lecodes 0029
+void FRenderableManager::setAmbientCube(Instance const ci, math::float4 const* cube, float const skyVisibility,
+        float const sunVisibility) noexcept {
+    if (!ci || cube == nullptr) return;
+    AmbientCube& c = mAmbientCubes[mManager.getEntity(ci)];
+    for (size_t k = 0; k < 6; k++) c.side[k] = cube[k];
+    c.skyVisibility = skyVisibility;
+    c.sunVisibility = sunVisibility;
+}
+
+void FRenderableManager::clearAmbientCube(Instance const ci) noexcept {
+    if (ci) mAmbientCubes.erase(mManager.getEntity(ci));
 }
 
 void FRenderableManager::setLightChannel(Instance const ci, unsigned int const channel, bool const enable) noexcept {

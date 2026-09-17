@@ -8,6 +8,10 @@ highp int object_uniforms_morphTargetCount;
 highp int object_uniforms_flagsChannels;                   // see packFlags() below (0x00000fll)
 highp int object_uniforms_objectId;                        // used for picking
 highp float object_uniforms_userData;   // TODO: We need a better solution, this currently holds the average local scale for the renderable
+#if MATERIAL_FEATURE_LEVEL > 0
+// lecodes 0029: the renderable's baked ambient cube (RenderableManager::setAmbientCube); [6] = (sky visibility, signature x 2, the baked sun visibility)
+highp vec4 object_uniforms_ambientCube[7];
+#endif
 
 //------------------------------------------------------------------------------
 // Instance access
@@ -45,6 +49,17 @@ void initObjectUniforms() {
     object_uniforms_flagsChannels               = objectUniforms.data[i].flagsChannels;
     object_uniforms_objectId                    = objectUniforms.data[i].objectId;
     object_uniforms_userData                    = objectUniforms.data[i].userData;
+#if MATERIAL_FEATURE_LEVEL > 0
+    object_uniforms_ambientCube[6]              = objectUniforms.data[i].reserved[6];
+    if (object_uniforms_ambientCube[6].yz == vec2(7885.0, -7885.0)) {   // the signature (Scene.cpp), not a flag
+        object_uniforms_ambientCube[0]          = objectUniforms.data[i].reserved[0];
+        object_uniforms_ambientCube[1]          = objectUniforms.data[i].reserved[1];
+        object_uniforms_ambientCube[2]          = objectUniforms.data[i].reserved[2];
+        object_uniforms_ambientCube[3]          = objectUniforms.data[i].reserved[3];
+        object_uniforms_ambientCube[4]          = objectUniforms.data[i].reserved[4];
+        object_uniforms_ambientCube[5]          = objectUniforms.data[i].reserved[5];
+    }
+#endif
 }
 
 #if defined(FILAMENT_HAS_FEATURE_INSTANCING) && defined(MATERIAL_HAS_INSTANCES)
