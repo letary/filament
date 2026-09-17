@@ -361,6 +361,9 @@ void FScene::prepareVisibleRenderables(Range<uint32_t> visibleRenderables, FScen
     RenderableSoa& sceneData = cache.renderableData;
     
     cache.hasContactShadows = false;
+    // lecodes 0029: the baked ambient cubes (RenderableManager::setAmbientCube) into the block's reserved vectors
+    FRenderableManager const& rcmAmbient = mEngine.getRenderableManager();
+    bool const anyAmbient = rcmAmbient.hasAmbientCubes();
     for (uint32_t const i : visibleRenderables) {
         PerRenderableData& uboData = sceneData.elementAt<UBO>(i);
 
@@ -407,6 +410,17 @@ void FScene::prepareVisibleRenderables(Range<uint32_t> visibleRenderables, FScen
 
         // TODO: We need to find a better way to provide the scale information per object
         uboData.userData = sceneData.elementAt<USER_DATA>(i);
+
+        // lecodes 0029: reserved[0..5] = the cube's sides, reserved[6] = (sky visibility, 7885, -7885, sun visibility) when the cube is
+        // on - a signature and not a flag: materials compiled with 0029's shaders may meet an engine without it (a host not
+        // rebuilt yet) that never writes these vectors, and whatever lies there must not read as a cube
+        FRenderableManager::AmbientCube const* const ambient = anyAmbient ? rcmAmbient.getAmbientCube(entity) : nullptr;
+        if (ambient != nullptr) {
+            for (size_t k = 0; k < 6; k++) uboData.reserved[k] = ambient->side[k];
+            uboData.reserved[6] = { ambient->skyVisibility, 7885.0f, -7885.0f, ambient->sunVisibility };
+        } else {
+            uboData.reserved[6] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        }
 
         cache.hasContactShadows = cache.hasContactShadows || visibility.screenSpaceContactShadows;
     }

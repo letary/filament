@@ -784,6 +784,19 @@ void evaluateIBL(const MaterialInputs material, const PixelParams pixel, inout v
 #elif IBL_INTEGRATION == IBL_INTEGRATION_IMPORTANCE_SAMPLING
     vec3 diffuseIrradiance = isEvaluateDiffuseIBL(pixel, diffuseNormal, shading_view);
 #endif
+#if MATERIAL_FEATURE_LEVEL > 0
+    // lecodes 0029: a renderable with a baked ambient cube takes its diffuse indirect light from it - six irradiances
+    // in lux weighed by the squares of the normal's components, / pi like the SH's (Lambert is baked in) - and keeps the
+    // IBL's reflections through its sky visibility. The cube is in lux, the IBL's numbers in units of iblLuminance:
+    // each gets its own scale at the end.
+    bool lecodesAmbient = object_uniforms_ambientCube[6].yz == vec2(7885.0, -7885.0);
+    if (lecodesAmbient) {
+        highp vec3 w2 = diffuseNormal * diffuseNormal;
+        diffuseIrradiance = (w2.x * object_uniforms_ambientCube[diffuseNormal.x >= 0.0 ? 0 : 1].rgb
+                           + w2.y * object_uniforms_ambientCube[diffuseNormal.y >= 0.0 ? 2 : 3].rgb
+                           + w2.z * object_uniforms_ambientCube[diffuseNormal.z >= 0.0 ? 4 : 5].rgb) * (1.0 / PI);
+    }
+#endif
     vec3 Fd = pixel.diffuseColor * diffuseIrradiance * (1.0 - E) * diffuseBRDF;
 
     // subsurface layer
@@ -799,8 +812,13 @@ void evaluateIBL(const MaterialInputs material, const PixelParams pixel, inout v
     // clear coat layer
     evaluateClearCoatIBL(pixel, diffuseAO, interpolationCache, Fd, Fr);
 
+#if MATERIAL_FEATURE_LEVEL > 0
+    Fr *= frameUniforms.iblLuminance * (lecodesAmbient ? object_uniforms_ambientCube[6].x : 1.0);
+    Fd *= lecodesAmbient ? frameUniforms.exposure : frameUniforms.iblLuminance;
+#else
     Fr *= frameUniforms.iblLuminance;
     Fd *= frameUniforms.iblLuminance;
+#endif
 
 #if defined(MATERIAL_HAS_REFRACTION)
     vec3 Ft = evaluateRefraction(pixel, shading_normal, E);

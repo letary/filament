@@ -212,6 +212,15 @@ size_t RenderableManager::getMorphTargetCount(Instance const instance) const noe
     return downcast(this)->getMorphTargetCount(instance);
 }
 
+void RenderableManager::setAmbientCube(Instance const instance, math::float4 const* cube, float const skyVisibility,
+        float const sunVisibility) noexcept {
+    downcast(this)->setAmbientCube(instance, cube, skyVisibility, sunVisibility);
+}
+
+void RenderableManager::clearAmbientCube(Instance const instance) noexcept {
+    downcast(this)->clearAmbientCube(instance);
+}
+
 void RenderableManager::setLightChannel(Instance const instance, unsigned int const channel, bool const enable) noexcept {
     downcast(this)->setLightChannel(instance, channel, enable);
 }
