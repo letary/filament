@@ -153,3 +153,9 @@ highp vec4 getCascadeLightSpacePosition(int cascade) {
 
 #endif
 
+// lecodes 0030: the DIRECTIONAL light's shadow-map visibility at this fragment (1 = lit, 0 = in shadow; the far
+// attenuation applied), for material code that owns its lighting - a baked surface that takes a mover's real-time shadow
+// out of its baked sun. Whatever the renderable's light channels. 1 in variants without a shadow map. Defined at the
+// end of the fragment shader (surface_main.fs / surface_depth_main.fs): the shadowing code comes after the material's.
+/** @public-api */
+float getSunShadowVisibility();
