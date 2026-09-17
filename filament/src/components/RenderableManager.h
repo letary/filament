@@ -41,6 +41,7 @@
 #include <math/mat4.h>
 
 #include <algorithm>
+#include <unordered_map>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -185,6 +186,18 @@ public:
 
     void setLightChannel(Instance instance, unsigned int channel, bool enable) noexcept;
     bool getLightChannel(Instance instance, unsigned int channel) const noexcept;
+
+    // lecodes 0029: the baked ambient cube of a renderable (see the public header). A side table by entity rather than
+    // a field of the component SoA and of the scene's: few renderables carry one, and the upstream structures stay as
+    // they are for the next rebase. Written between frames by the client, read by FScene::prepareVisibleRenderables.
+    struct AmbientCube { math::float4 side[6]; float skyVisibility; float sunVisibility; };
+    void setAmbientCube(Instance instance, math::float4 const* cube, float skyVisibility, float sunVisibility) noexcept;
+    void clearAmbientCube(Instance instance) noexcept;
+    bool hasAmbientCubes() const noexcept { return !mAmbientCubes.empty(); }
+    AmbientCube const* getAmbientCube(utils::Entity e) const noexcept {
+        auto const it = mAmbientCubes.find(e);
+        return it == mAmbientCubes.end() ? nullptr : &it->second;
+    }
 
     inline bool isShadowCaster(Instance instance) const noexcept;
     inline bool isShadowReceiver(Instance instance) const noexcept;
@@ -347,6 +360,8 @@ private:
     };
 
     Sim mManager;
+
+    std::unordered_map<utils::Entity, AmbientCube, utils::Entity::Hasher> mAmbientCubes;   // lecodes 0029
     FEngine& mEngine;
     HwRenderPrimitiveFactory mHwRenderPrimitiveFactory;
 };

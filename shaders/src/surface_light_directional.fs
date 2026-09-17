@@ -89,6 +89,14 @@ void evaluateDirectionalLight(const MaterialInputs material,
     }
 #endif
 
+#if MATERIAL_FEATURE_LEVEL > 0
+    // lecodes 0029: the BAKED statics' shadow on a renderable with an ambient cube - the share of the sun's disc its place
+    // sees, from the light grid. The statics then cast nothing in real time and the shadow map holds the movers only.
+    if (object_uniforms_ambientCube[6].yz == vec2(7885.0, -7885.0)) {
+        visibility *= object_uniforms_ambientCube[6].w;
+    }
+#endif
+
 #if defined(MATERIAL_HAS_CUSTOM_SURFACE_SHADING)
     color.rgb += customSurfaceShading(material, pixel, light, visibility);
 #else
