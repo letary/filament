@@ -778,6 +778,20 @@ public:
     void setCastShadows(Instance instance, bool enable) noexcept;
 
     /**
+     * lecodes 0035: keeps a shadow RECEIVER out of the shadow maps.
+     *
+     * With VSM or PCSS shadows every renderable that receives shadows is also drawn into the shadow maps, whatever
+     * setCastShadows() says (the receiver's own depth is the background the moments are filtered against). A renderable
+     * marked here is left out: it casts only if setCastShadows(true) says so. For a surface whose shadow is already in
+     * its baked light - drawn into the map it would be shadowed a second time, by itself and by every other baked
+     * surface. Off by default (upstream's behaviour).
+     */
+    void setShadowReceiverOnly(Instance instance, bool enable) noexcept;
+
+    /** lecodes 0035: whether setShadowReceiverOnly() is set */
+    bool isShadowReceiverOnly(Instance instance) const noexcept;
+
+    /**
      * Changes whether or not the renderable can receive shadows.
      *
      * \see Builder::receiveShadows()

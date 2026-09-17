@@ -93,6 +93,15 @@ void RenderableManager::setCastShadows(Instance const instance, bool const enabl
     downcast(this)->setCastShadows(instance, enable);
 }
 
+// lecodes 0035
+void RenderableManager::setShadowReceiverOnly(Instance const instance, bool const enable) noexcept {
+    downcast(this)->setShadowReceiverOnly(instance, enable);
+}
+
+bool RenderableManager::isShadowReceiverOnly(Instance const instance) const noexcept {
+    return downcast(this)->isShadowReceiverOnly(instance);
+}
+
 void RenderableManager::setReceiveShadows(Instance const instance, bool const enable) noexcept {
     downcast(this)->setReceiveShadows(instance, enable);
 }

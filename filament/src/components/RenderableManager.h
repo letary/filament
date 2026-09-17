@@ -77,6 +77,7 @@ public:
         bool reversedWindingOrder       : 1;
         bool fog                        : 1;
         GeometryType geometryType       : 2;
+        bool shadowReceiverOnly         : 1;    // lecodes 0035: never a caster by way of "receivers are casters"
     };
 
     struct Skinning {
@@ -150,6 +151,8 @@ public:
     inline void setChannel(Instance instance, uint8_t channel) noexcept;
 
     inline void setCastShadows(Instance instance, bool enable) noexcept;
+    inline void setShadowReceiverOnly(Instance instance, bool enable) noexcept;   // lecodes 0035
+    inline bool isShadowReceiverOnly(Instance instance) const noexcept;
 
     inline void setLayerMask(Instance instance, uint8_t layerMask) noexcept;
     inline void setReceiveShadows(Instance instance, bool enable) noexcept;
@@ -422,6 +425,21 @@ void FRenderableManager::setChannel(Instance const instance, uint8_t const chann
             mManager.notifyChange(getEntity(instance));
         }
     }
+}
+
+// lecodes 0035
+void FRenderableManager::setShadowReceiverOnly(Instance const instance, bool const enable) noexcept {
+    if (instance) {
+        Visibility& visibility = mManager[instance].visibility;
+        if (visibility.shadowReceiverOnly != enable) {
+            visibility.shadowReceiverOnly = enable;
+            mManager.notifyChange(getEntity(instance));
+        }
+    }
+}
+
+bool FRenderableManager::isShadowReceiverOnly(Instance const instance) const noexcept {
+    return getVisibility(instance).shadowReceiverOnly;
 }
 
 void FRenderableManager::setCastShadows(Instance const instance, bool const enable) noexcept {

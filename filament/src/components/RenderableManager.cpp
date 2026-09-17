@@ -646,6 +646,7 @@ void FRenderableManager::create(
         setLayerMask(ci, builder->mLayerMask);
         setPriority(ci, builder->mPriority);
         setChannel(ci, builder->mCommandChannel);
+        { Visibility& visibility = mManager[ci].visibility; visibility.shadowReceiverOnly = false; }   // lecodes 0035
         setCastShadows(ci, builder->mCastShadows);
         setReceiveShadows(ci, builder->mReceiveShadows);
         setScreenSpaceContactShadows(ci, builder->mScreenSpaceContactShadows);

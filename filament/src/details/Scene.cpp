@@ -213,7 +213,8 @@ void FScene::prepare(JobSystem& js,
 
             auto visibility = rcm.getVisibility(ri);
             visibility.reversedWindingOrder = reversedWindingOrder;
-            if (shadowReceiversAreCasters && visibility.receiveShadows) {
+            // lecodes 0035: a receiver marked setShadowReceiverOnly() stays out of the maps
+            if (shadowReceiversAreCasters && visibility.receiveShadows && !visibility.shadowReceiverOnly) {
                 visibility.castShadows = true;
             }
 
