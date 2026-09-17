@@ -708,6 +708,9 @@ vec3 evaluateRefraction(const PixelParams pixel, const vec3 n0, vec3 E) {
 #endif
 
 
+// lecodes 0034: evaluateIBL names a LOCAL `diffuseIrradiance`, which hides the function there
+vec3 lecodesSkyIrradiance(const vec3 n) { return diffuseIrradiance(n); }
+
 void evaluateIBL(const MaterialInputs material, const PixelParams pixel, inout vec3 color) {
     // specular layer
     vec3 Fr = vec3(0.0);
@@ -813,7 +816,33 @@ void evaluateIBL(const MaterialInputs material, const PixelParams pixel, inout v
     evaluateClearCoatIBL(pixel, diffuseAO, interpolationCache, Fd, Fr);
 
 #if MATERIAL_FEATURE_LEVEL > 0
-    Fr *= frameUniforms.iblLuminance * (lecodesAmbient ? object_uniforms_ambientCube[6].x : 1.0);
+    if (lecodesAmbient) {
+        // lecodes 0034: THE CUBE REFLECTS TOO. Through the sky visibility alone a mover indoors reflected nothing - a metal
+        // barrel in a room was black next to baked walls that mirror their probes. The cube is all the light that arrives
+        // at the object (sky, lamps, every bounce - not the direct sun, which is a real light with its own lobe): read
+        // along the reflection it is the irradiance from that side, and E / pi the radiance of a surrounding that would
+        // give it. The SKY's part of that is what the IBL already reflects (through the visibility, sharp), so it comes
+        // out first - the cube's remainder is the room. Blurred to six sides: rough metal and plastic read right, a
+        // chrome ball gets a tone, not a picture (that needs the probes in every lit material).
+        // reserved[6].x = the sky visibility, + 2 = "no cube reflections" (creator-gl CREATOR_CUBE_SPECULAR=0).
+        highp float skyVis = object_uniforms_ambientCube[6].x;
+        bool cubeSpecular = skyVis < 1.5;
+        if (!cubeSpecular) skyVis -= 2.0;
+        Fr *= frameUniforms.iblLuminance * skyVis;
+        if (cubeSpecular) {
+            vec3 rc = getReflectedVector(pixel, shading_normal);
+            highp vec3 r2 = rc * rc;
+            highp vec3 cubeR = (r2.x * object_uniforms_ambientCube[rc.x >= 0.0 ? 0 : 1].rgb
+                              + r2.y * object_uniforms_ambientCube[rc.y >= 0.0 ? 2 : 3].rgb
+                              + r2.z * object_uniforms_ambientCube[rc.z >= 0.0 ? 4 : 5].rgb) * (frameUniforms.exposure / PI);
+            // the sky's share of the cube along r: its SH irradiance (Lambert baked in) through the visibility
+            highp vec3 skyR = lecodesSkyIrradiance(rc) * (frameUniforms.iblLuminance * skyVis);
+            highp vec3 room = max(cubeR - max(skyR, vec3(0.0)), vec3(0.0));
+            Fr += E * room * specularSingleBounceAO;
+        }
+    } else {
+        Fr *= frameUniforms.iblLuminance;
+    }
     Fd *= lecodesAmbient ? frameUniforms.exposure : frameUniforms.iblLuminance;
 #else
     Fr *= frameUniforms.iblLuminance;
