@@ -690,7 +690,11 @@ enum class ShadowType : uint8_t {
     PCF,
     /** exponential variance shadows (EVSM) */
     VSM,
-    /** @deprecated falls back to PCSS */
+    /**
+     * lecodes 0039: PCSS on the plain depth map - a Poisson blocker search, then a variable-width PCF (contact
+     * hardening). Unlike VSM / PCSS it needs only the CASTERS in the map, so it works over receivers that are
+     * kept out of it (baked statics). Upstream deprecated this value (it fell back to PCSS).
+     */
     DPCF,
     /** EVSM with soft shadows and contact hardening */
     PCSS,
