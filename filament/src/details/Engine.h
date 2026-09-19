@@ -770,6 +770,7 @@ public:
             bool display_shadow_texture = false;
             bool far_uses_shadowcasters = true;
             bool focus_shadowcasters = true;
+            bool log_directional_fit = false;   // lecodes 0038
             bool visualize_cascades = false;
             bool disable_light_frustum_align = false;
             bool depth_clamp = true;
