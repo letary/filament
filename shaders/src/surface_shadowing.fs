@@ -418,8 +418,6 @@ float ShadowSample_DPCF(const bool DIRECTIONAL,
     highp vec2 texelSize = vec2(1.0) / size;
     highp float invW = 1.0 / shadowPosition.w;
     highp vec3 position = shadowPosition.xyz * invW;
-    // note: position.z is in the [1, 0] range (reversed Z): a blocker's depth is ABOVE the receiver's
-    position.z = saturate(position.z);
 
     // Receiver-plane depth bias (GDC '06, Shadow Mapping: GPU-based Tips and Techniques): the kernels are wide, and a
     // receiver that is itself in the map would shadow itself along its slope without it.
@@ -432,6 +430,11 @@ float ShadowSample_DPCF(const bool DIRECTIONAL,
         // a grazing receiver gives unbounded slopes: hold them to what one texel of constant bias would hide
         dz_duv = clamp(dz_duv, vec2(-64.0), vec2(64.0));
     }
+    // note: position.z is in the [1, 0] range (reversed Z): a blocker's depth is ABOVE the receiver's. Saturated AFTER the
+    // slopes are taken: a receiver past the light's far plane sits at 0, which is also what an EMPTY texel holds - so a
+    // blocker is strictly above the receiver's plane, and that plane never goes under 0. (With >= the whole ground past
+    // the far plane - the deepest caster IN VIEW - went dark along a straight line; fps-demo yard, 2026-09-19.)
+    position.z = saturate(position.z);
 
     // How far the map coordinate and the depth move per METRE of world space at this fragment: the gradient of
     // (row . p) / w is (row - value * row3) / w. It holds for the ortho, the LiSPSM-warped and the perspective matrix.
@@ -460,7 +463,7 @@ float ShadowSample_DPCF(const bool DIRECTIONAL,
         highp vec2 duv = dpcfTap(i, float(DPCF_SEARCH_TAP_COUNT), phase) * searchRadii;
         highp vec2 tc = clamp(position.xy + duv, scissorNormalized.xy, scissorNormalized.zw);
         highp float z = textureLod(map, vec3(tc, layer), 0.0).r;
-        highp float blocked = step(dot(dz_duv, duv), z - position.z);   // the receiver's own plane at this tap
+        highp float blocked = float(z > max(position.z + dot(dz_duv, duv), 0.0));   // the receiver's own plane at this tap
         blockers += blocked;
         zBlockers += z * blocked;
     }
@@ -486,7 +489,7 @@ float ShadowSample_DPCF(const bool DIRECTIONAL,
         d[1] = texelFetchOffset(map, ivec3(st, layer), 0, ivec2(1, 1)).r;
         d[2] = texelFetchOffset(map, ivec3(st, layer), 0, ivec2(1, 0)).r;
         d[3] = texelFetchOffset(map, ivec3(st, layer), 0, ivec2(0, 0)).r;
-        highp vec4 pcf = step(vec4(dot(dz_duv, duv)), d - vec4(position.z));
+        highp vec4 pcf = vec4(greaterThan(d, vec4(max(position.z + dot(dz_duv, duv), 0.0))));
         occluded += mix(mix(pcf.w, pcf.z, grad.x), mix(pcf.x, pcf.y, grad.x), grad.y);
     }
     return 1.0 - occluded * (1.0 / float(DPCF_FILTER_TAP_COUNT));
