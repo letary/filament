@@ -147,6 +147,7 @@ bool ShadowMapManager::isDepthClampEnabled(FEngine const& engine,
     return (shadowMap.getShadowLightType() == ShadowLightType::DIRECTIONAL) &&
             !view.hasVSM() &&
             !view.hasPCSS() &&
+            !view.hasDPCF() &&   // lecodes 0039: the blocker's DISTANCE is read from the map - a clamped caster has none
             mIsDepthClampSupported &&
             engine.debug.shadowmap.depth_clamp;
 }
