@@ -16,6 +16,8 @@
 
 #include "ShadowMap.h"
 
+#include <cstdio>
+
 #include "components/LightManager.h"
 
 #include "details/DebugRegistry.h"
@@ -71,6 +73,7 @@ ShadowMap::ShadowMap(FEngine& engine) noexcept
     FDebugRegistry& debugRegistry = engine.getDebugRegistry();
     debugRegistry.registerProperty("d.shadowmap.focus_shadowcasters", &engine.debug.shadowmap.focus_shadowcasters);
     debugRegistry.registerProperty("d.shadowmap.far_uses_shadowcasters", &engine.debug.shadowmap.far_uses_shadowcasters);
+    debugRegistry.registerProperty("d.shadowmap.log_directional_fit", &engine.debug.shadowmap.log_directional_fit);   // lecodes 0038
     debugRegistry.registerProperty("d.shadowmap.dzn", &engine.debug.shadowmap.dzn);
     debugRegistry.registerProperty("d.shadowmap.dzf", &engine.debug.shadowmap.dzf);
 }
@@ -261,6 +264,21 @@ ShadowMap::ShaderParameters ShadowMap::updateDirectional(FEngine& engine,
     mDebugCamera->setCustomProjection(mat4(S * b * camera.worldTransform), znear, zfar);
 
     mHasVisibleShadows = true;
+
+    // lecodes 0038: d.shadowmap.log_directional_fit prints the fit twice a second - the light's depth range (EVSM
+    // precision is spent over it) and the world size of a texel at the centre / bottom / top of the map. One renderable
+    // with a huge box in the caster set shows here as a range of hundreds of metres.
+    if (UTILS_UNLIKELY(engine.debug.shadowmap.log_directional_fit)) {
+        static uint32_t frame = 0;
+        if ((frame++ % 30u) == 0u) {
+            float2 const tc = texelSizeWorldSpaceAt(S, {0, 0, 0}, shadowMapInfo.shadowDimension);
+            float2 const t0 = texelSizeWorldSpaceAt(S, {0, -0.9f, 0}, shadowMapInfo.shadowDimension);
+            float2 const t1 = texelSizeWorldSpaceAt(S, {0, 0.9f, 0}, shadowMapInfo.shadowDimension);
+            fprintf(stderr, "[shadowfit] near %.2f far %.2f range %.2f m lispsm %d vsm %d dim %u texel(mm) centre %.1fx%.1f bottom %.1fx%.1f top %.1fx%.1f\n",
+                    znear, zfar, zfar - znear, useLispsm ? 1 : 0, shadowMapInfo.vsm ? 1 : 0, (unsigned)shadowMapInfo.shadowDimension,
+                    tc.x * 1000.0f, tc.y * 1000.0f, t0.x * 1000.0f, t0.y * 1000.0f, t1.x * 1000.0f, t1.y * 1000.0f);
+        }
+    }
 
     return shaderParameters;
 }
