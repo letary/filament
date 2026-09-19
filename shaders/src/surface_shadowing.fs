@@ -6,6 +6,7 @@
 #define SHADOW_SAMPLING_RUNTIME_PCF     0u
 #define SHADOW_SAMPLING_RUNTIME_EVSM    1u
 #define SHADOW_SAMPLING_RUNTIME_EVSSM   2u
+#define SHADOW_SAMPLING_RUNTIME_DPCF    3u   // lecodes 0039
 
 #define SHADOW_SAMPLING_PCF_HARD        0
 #define SHADOW_SAMPLING_PCF_LOW         1
@@ -388,6 +389,110 @@ float ShadowSample_EVSSM(const bool DIRECTIONAL, const highp sampler2DArray shad
 }
 
 //------------------------------------------------------------------------------
+// DPCF (lecodes 0039): PCSS on the plain depth map
+//------------------------------------------------------------------------------
+// Upstream dropped its depth-map DPCF / PCSS for the EVSM one (#10188). The EVSM filters read the blocker and the
+// penumbra from what is UNDER THE PIXEL IN THE MAP, so every receiver has to be in the map; a level whose statics are
+// baked keeps them out of it (their shadow is in the lightmap) and cannot use those. This one needs the casters only:
+// the receiver's depth comes from the fragment. A blocker search over a disk, then a variable-width PCF - in METRES, through
+// the gradients of the light matrix, so LiSPSM's warp is accounted for (upstream's version ignored it).
+
+// The taps sit on a Vogel (golden-angle) spiral turned by a per-pixel angle: unlike a rotated Poisson table it has no
+// preferred direction left after the turn, so the dither that remains in the penumbra has no hatch pattern to it.
+highp vec2 dpcfTap(const uint i, const float count, const highp float phase) {
+    highp float r = sqrt((float(i) + 0.5) / count);
+    highp float a = float(i) * 2.3999632 + phase;
+    return vec2(cos(a), sin(a)) * r;
+}
+
+const uint DPCF_SEARCH_TAP_COUNT = 32u;    // more samples = a better shape of the hardened shadow
+const uint DPCF_FILTER_TAP_COUNT = 64u;    // fewer samples = a noisier penumbra
+const float DPCF_MAX_PENUMBRA    = 0.60;   // metres, the widest penumbra (= twice the blocker search radius)
+
+float ShadowSample_DPCF(const bool DIRECTIONAL,
+        const highp sampler2DArray map,
+        const highp vec4 scissorNormalized,
+        const uint layer, const int index,
+        const highp vec4 shadowPosition, const highp float zLight) {
+    highp vec2 size = vec2(textureSize(map, 0).xy);
+    highp vec2 texelSize = vec2(1.0) / size;
+    highp float invW = 1.0 / shadowPosition.w;
+    highp vec3 position = shadowPosition.xyz * invW;
+    // note: position.z is in the [1, 0] range (reversed Z): a blocker's depth is ABOVE the receiver's
+    position.z = saturate(position.z);
+
+    // Receiver-plane depth bias (GDC '06, Shadow Mapping: GPU-based Tips and Techniques): the kernels are wide, and a
+    // receiver that is itself in the map would shadow itself along its slope without it.
+    highp vec3 dx = dFdx(position);
+    highp vec3 dy = dFdy(position);
+    highp float det = dx.x * dy.y - dx.y * dy.x;
+    highp vec2 dz_duv = vec2(0.0);
+    if (abs(det) > 1e-12) {
+        dz_duv = vec2(dy.y * dx.z - dx.y * dy.z, dx.x * dy.z - dy.x * dx.z) / det;
+        // a grazing receiver gives unbounded slopes: hold them to what one texel of constant bias would hide
+        dz_duv = clamp(dz_duv, vec2(-64.0), vec2(64.0));
+    }
+
+    // How far the map coordinate and the depth move per METRE of world space at this fragment: the gradient of
+    // (row . p) / w is (row - value * row3) / w. It holds for the ortho, the LiSPSM-warped and the perspective matrix.
+    highp mat4 m = shadowUniforms.shadows[index].lightFromWorldMatrix;
+    highp vec3 r0 = vec3(m[0][0], m[1][0], m[2][0]);
+    highp vec3 r1 = vec3(m[0][1], m[1][1], m[2][1]);
+    highp vec3 r2 = vec3(m[0][2], m[1][2], m[2][2]);
+    highp vec3 r3 = vec3(m[0][3], m[1][3], m[2][3]);
+    highp vec2 uvPerMetre = vec2(length(r0 - position.x * r3), length(r1 - position.y * r3)) * abs(invW);
+    highp float zPerMetre = max(length(r2 - position.z * r3) * abs(invW), 1e-6);
+
+    mediump float bulbRadius = unpackHalf2x16(shadowUniforms.shadows[index].bulbRadius_vsmExponent).x;
+    // penumbra width per metre between the blocker and the receiver
+    highp float spread = DIRECTIONAL ? bulbRadius : bulbRadius / max(zLight, 0.05);
+
+    // turn the spiral by a per-pixel angle
+    highp float phase = interleavedGradientNoise(gl_FragCoord.xy + vec2(frameUniforms.temporalNoise)) * (2.0 * PI);
+
+    // 1. blocker search, over the widest penumbra this receiver can get: its blocker cannot be further than the near plane
+    highp float reach = (1.0 - position.z) / zPerMetre;
+    highp float searchRadius = 0.5 * min(spread * reach, DPCF_MAX_PENUMBRA);
+    highp vec2 searchRadii = max(searchRadius * uvPerMetre, texelSize);
+    highp float blockers = 0.0;
+    highp float zBlockers = 0.0;
+    for (uint i = 0u; i < DPCF_SEARCH_TAP_COUNT; i++) {
+        highp vec2 duv = dpcfTap(i, float(DPCF_SEARCH_TAP_COUNT), phase) * searchRadii;
+        highp vec2 tc = clamp(position.xy + duv, scissorNormalized.xy, scissorNormalized.zw);
+        highp float z = textureLod(map, vec3(tc, layer), 0.0).r;
+        highp float blocked = step(dot(dz_duv, duv), z - position.z);   // the receiver's own plane at this tap
+        blockers += blocked;
+        zBlockers += z * blocked;
+    }
+    if (blockers == 0.0) {
+        return 1.0;
+    }
+
+    // 2. the penumbra, from the blockers' mean distance
+    highp float distance = max(zBlockers / blockers - position.z, 0.0) / zPerMetre;
+    highp float penumbra = min(spread * distance, DPCF_MAX_PENUMBRA);
+    // never under 1.5 texels: that is the hardest edge the map can draw without a staircase
+    highp vec2 filterRadii = max(0.5 * penumbra * uvPerMetre, 1.5 * texelSize);
+
+    // 3. the filter: each tap is a 2x2 bilinear PCF, which helps a lot where the map is coarse
+    highp float occluded = 0.0;
+    for (uint i = 0u; i < DPCF_FILTER_TAP_COUNT; i++) {
+        highp vec2 duv = dpcfTap(i, float(DPCF_FILTER_TAP_COUNT), phase) * filterRadii;
+        highp vec2 tc = clamp(position.xy + duv, scissorNormalized.xy, scissorNormalized.zw);
+        highp vec2 st = tc * size - 0.5;
+        highp vec2 grad = fract(st);
+        highp vec4 d;
+        d[0] = texelFetchOffset(map, ivec3(st, layer), 0, ivec2(0, 1)).r;
+        d[1] = texelFetchOffset(map, ivec3(st, layer), 0, ivec2(1, 1)).r;
+        d[2] = texelFetchOffset(map, ivec3(st, layer), 0, ivec2(1, 0)).r;
+        d[3] = texelFetchOffset(map, ivec3(st, layer), 0, ivec2(0, 0)).r;
+        highp vec4 pcf = step(vec4(dot(dz_duv, duv)), d - vec4(position.z));
+        occluded += mix(mix(pcf.w, pcf.z, grad.x), mix(pcf.x, pcf.y, grad.x), grad.y);
+    }
+    return 1.0 - occluded * (1.0 / float(DPCF_FILTER_TAP_COUNT));
+}
+
+//------------------------------------------------------------------------------
 // Screen-space Contact Shadows
 //------------------------------------------------------------------------------
 
@@ -536,6 +641,11 @@ float shadow(const bool DIRECTIONAL,
 
     if (frameUniforms.shadowSamplingType == SHADOW_SAMPLING_RUNTIME_EVSSM) {
         return ShadowSample_EVSSM(DIRECTIONAL, shadowMap, scissorNormalized, layer, index,
+                shadowPosition, zLight);
+    }
+
+    if (frameUniforms.shadowSamplingType == SHADOW_SAMPLING_RUNTIME_DPCF) {   // lecodes 0039
+        return ShadowSample_DPCF(DIRECTIONAL, shadowMap, scissorNormalized, layer, index,
                 shadowPosition, zLight);
     }
 

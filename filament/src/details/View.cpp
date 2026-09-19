@@ -1255,11 +1255,11 @@ void FView::prepareShadowMapping(FEngine const& engine, Handle<HwTexture> textur
         case ShadowType::VSM:
             getColorPassDescriptorSet().prepareShadowVSM(texture, mVsmShadowOptions);
             break;
-        case ShadowType::DPCF:
-            UTILS_FALLTHROUGH;
         case ShadowType::PCSS:
             getColorPassDescriptorSet().prepareShadowPCSS(texture);
             break;
+        case ShadowType::DPCF:   // lecodes 0039: the depth map, read as plain depth (no compare) - PCFd's binding
+            UTILS_FALLTHROUGH;
         case ShadowType::PCFd:
             getColorPassDescriptorSet().prepareShadowPCFDebug(texture);
             break;
@@ -1276,6 +1276,7 @@ void FView::prepareShadowMapping() const noexcept {
     constexpr uint32_t SHADOW_SAMPLING_RUNTIME_PCF   = 0u;
     constexpr uint32_t SHADOW_SAMPLING_RUNTIME_EVSM  = 1u;
     constexpr uint32_t SHADOW_SAMPLING_RUNTIME_EVSSM = 2u;
+    constexpr uint32_t SHADOW_SAMPLING_RUNTIME_DPCF  = 3u;   // lecodes 0039
     auto& s = mUniforms.edit();
     s.cascadeSplits = uniforms.cascadeSplits;
     s.shadowAtlasResolution = uniforms.atlasResolution;
@@ -1292,8 +1293,9 @@ void FView::prepareShadowMapping() const noexcept {
             s.vsmMaxMoment = ShadowMapManager::getMaxMomentEVSM(mVsmShadowOptions);
             s.vsmLightBleedReduction = mVsmShadowOptions.lightBleedReduction;
             break;
-        case ShadowType::DPCF:
-            UTILS_FALLTHROUGH;
+        case ShadowType::DPCF:   // lecodes 0039
+            s.shadowSamplingType = SHADOW_SAMPLING_RUNTIME_DPCF;
+            break;
         case ShadowType::PCSS:
             s.shadowSamplingType = SHADOW_SAMPLING_RUNTIME_EVSSM;
             s.vsmExponent = 0; // this is only used when rendering the shadowmap, not when using it
