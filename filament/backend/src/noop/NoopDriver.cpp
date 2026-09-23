@@ -44,7 +44,10 @@ Dispatcher NoopDriver::getDispatcher() const noexcept {
 }
 
 ShaderModel NoopDriver::getShaderModel() const noexcept {
-#if defined(__ANDROID__) || defined(FILAMENT_IOS) || defined(__EMSCRIPTEN__)
+#if defined(__ANDROID__) || defined(FILAMENT_IOS) || defined(__EMSCRIPTEN__) || defined(FILAMENT_SUPPORTS_EGL_ON_LINUX)
+    // lecodes 0041: the EGL-on-Linux build is a GLES host whose materials — the built-in ones
+    // included (FILAMENT_MATC_TARGET_OVERRIDE, lecodes 0004) — are compiled for MOBILE; a NOOP engine
+    // in that build must accept the same packages (the windowless server host).
     return ShaderModel::MOBILE;
 #else
     return ShaderModel::DESKTOP;
