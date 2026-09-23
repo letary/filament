@@ -151,6 +151,7 @@ VulkanPipelineCache::PipelineCacheEntry* VulkanPipelineCache::getOrCreatePipelin
 }
 
 void VulkanPipelineCache::recordClass(PipelineKey const& real) noexcept {
+    if (!mContext.shouldUsePipelineCachePrewarming()) return;   // no pool, no registry
     PipelineKey k = real;
     k.shaders[0] = VK_NULL_HANDLE;
     k.shaders[1] = VK_NULL_HANDLE;
@@ -161,8 +162,15 @@ void VulkanPipelineCache::recordClass(PipelineKey const& real) noexcept {
         if (equal(c.key, k)) { cls = &c; break; }
     }
     if (cls == nullptr) {
+        // lecodes 0042: the class OWNS a ref to its render pass (the bound one — the key was
+        // built from it), so VulkanFboCache cannot evict the VkRenderPass a queued prewarm job
+        // will hand to vkCreateGraphicsPipelines. 0028 relied on CLASS_FRESH_FLUSHES (30) being
+        // under the FBO cache's eviction age (45), which holds only while the compiler thread
+        // keeps up: a burst of new programs queues seconds of builds, and a job that runs after
+        // its pass was evicted feeds the driver a dead handle.
+        assert_invariant(mBoundRenderPass && mBoundRenderPass->getVkRenderPass() == real.renderPass);
         if (mClasses.size() < MAX_CLASSES) {
-            mClasses.push_back({ k, mCurrentTime, {} });
+            mClasses.push_back({ k, mCurrentTime, {}, mBoundRenderPass });
             cls = &mClasses.back();
         } else {
             // Full: the least recently seen class gives way.
@@ -170,7 +178,7 @@ void VulkanPipelineCache::recordClass(PipelineKey const& real) noexcept {
             for (auto it = mClasses.begin(); it != mClasses.end(); ++it) {
                 if (it->lastSeen < oldest->lastSeen) oldest = it;
             }
-            *oldest = { k, mCurrentTime, {} };
+            *oldest = { k, mCurrentTime, {}, mBoundRenderPass };
             cls = &*oldest;
         }
     }
@@ -205,19 +213,28 @@ void VulkanPipelineCache::prewarmClass(PipelineClass const& cls,
     k.layout = layout;
     if (mPipelines.find(k) != mPipelines.end()) return;
 
+    // lecodes 0042: pin the render pass for the job's lifetime. VulkanRenderPass is not a
+    // thread-safe resource, so the ref stays on this (driver) thread: the job reports back through
+    // mPrewarmed in every outcome (built / failed / cancelled) and gc() releases the pin then.
+    uint32_t const pin = mNextPin++;
+    mPins.emplace(pin, cls.renderPass);
+
     CallbackManager::Handle cmh = mCallbackManager.get();
     auto token = std::make_shared<ProgramToken>();
     // vprogram is held by the job so the shader modules outlive createPipeline (as upstream does).
-    mCompilerThreadPool.queue(priority, token, [this, vprogram, k, cmh]() mutable {
+    mCompilerThreadPool.queue(priority, token, [this, vprogram, k, cmh, pin]() mutable {
+        VkPipeline pipeline = VK_NULL_HANDLE;
         if (!vprogram->isParallelCompilationCanceled()) {
-            VkPipeline pipeline = createPipeline(k, {});
+            pipeline = createPipeline(k, {});
             if (pipeline != VK_NULL_HANDLE) {
-                std::lock_guard<std::mutex> const lock(mPrewarmedLock);
-                mPrewarmed.push_back({ k, pipeline });
                 mPrewarmBuilt.fetch_add(1, std::memory_order_relaxed);
             } else {
                 mPrewarmFailed.fetch_add(1, std::memory_order_relaxed);
             }
+        }
+        {
+            std::lock_guard<std::mutex> const lock(mPrewarmedLock);
+            mPrewarmed.push_back({ k, pipeline, pin });
         }
         mCallbackManager.put(cmh);
     });
@@ -244,60 +261,22 @@ void VulkanPipelineCache::asyncPrewarmCache(
         StereoscopicType stereoscopicType,
         uint8_t stereoscopicViewCount,
         CompilerPriorityQueue priority) {
-    PipelineKey key {
-        .shaders = {
-            vprogram->getVertexShader(),
-            vprogram->getFragmentShader(),
-        },
-        // We're using dynamic rendering, so this should be empty.
-        .renderPass = VK_NULL_HANDLE,
-        .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-        .subpassIndex = 0,
-        // We're using vertex input dynamic state, so these should be empty.
-        .vertexAttributes = {},
-        .vertexBuffers = {},
-        // lecodes 0028: the stand-in raster state is the COMMON OPAQUE one — colour writes on, depth
-        // test + write, back-face culling — instead of upstream's "write nothing" state. Measured on
-        // NVIDIA 616 (cold driver cache): with colorWriteMask 0 / no depth write the driver compiled
-        // 87 prewarm pipelines and the 20 first-draw pipelines still cost 400 ms (394 ms with the
-        // prewarm off) — a fragment shader whose outputs are masked is dead-code-eliminated into a
-        // different binary, so nothing the prewarm built was ever a cache hit.
-        .rasterState = {
-            .cullMode = VK_CULL_MODE_BACK_BIT,
-            .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
-            .depthBiasEnable = VK_FALSE,
-            .blendEnable = VK_FALSE,
-            .depthWriteEnable = VK_TRUE,
-            .alphaToCoverageEnable = VK_FALSE,
-            .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
-            .dstColorBlendFactor = VK_BLEND_FACTOR_ZERO,
-            .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
-            .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
-            .colorWriteMask = 0xf,
-            .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
-            .depthClamp = VK_FALSE,
-            .colorTargetCount = 1,
-            .colorBlendOp = BlendEquation::ADD,
-            .alphaBlendOp = BlendEquation::ADD,
-            .depthCompareOp = SamplerCompareFunc::GE,
-            .depthBiasConstantFactor = 0.f,
-            .depthBiasSlopeFactor = 0.f,
-        },
-        .stencilState = {},
-        .layout = layout,
-    };
-    PipelineDynamicOptions dynamicOptions {
-        .useDynamicVertexInputState = true,
-        .useDynamicRenderPasses = true,
-        .stereoscopicType = stereoscopicType,
-        .stereoscopicViewCount = stereoscopicViewCount,
-    };
+    // lecodes 0042: upstream's stand-in pipeline is gone. It was built with dynamic rendering
+    // against VK_FORMAT_UNDEFINED attachments and VK_DYNAMIC_STATE_VERTEX_INPUT_EXT — a pipeline
+    // no draw ever asks for. 0028 measured it as worthless on NVIDIA (zero driver-cache hits), and
+    // it is the only prewarm job that can exist before the first draw: a StreetCity build crashed
+    // on an RTX 3070 / driver 560.94 inside the driver's shader compiler on the prewarm thread
+    // while the load-time programs were being stand-in-compiled (before any draw-time miss was
+    // logged); the same build ran clean on two newer drivers. A program with no class to build
+    // against is only REGISTERED here — the first class drawn with its layout prewarms it
+    // (recordClass), which is how every load-time program was really warmed up anyway.
+    (void) stereoscopicType;
+    (void) stereoscopicViewCount;
 
     // lecodes 0028: the REAL pipelines this program will be asked for — every fresh class (the
     // draw-time keys seen so far, minus their program) with this program's shaders and layout,
     // built exactly as the draw would (static vertex input, real render pass) and adopted into
-    // mPipelines by gc(). Falls back to upstream's stand-in pipeline while no class exists yet
-    // (programs created before the first frame).
+    // mPipelines by gc().
     bool registered = false;
     for (auto const& p : mPrograms) {
         if (p.program.get() == vprogram.get()) { registered = true; break; }
@@ -324,39 +303,8 @@ void VulkanPipelineCache::asyncPrewarmCache(
             ++matched;
         }
     }
-    if (matched > 0) return;
-
-    CallbackManager::Handle cmh = mCallbackManager.get();
-    auto token = std::make_shared<ProgramToken>();
-    // Note: we keep a ref to vprogram in this lambda so that the shader modules don't get
-    // destroyed before we call createPipeline(). We can catch this in some cases, to avoid
-    // compiling too many unnecessary already-destroyed-materials.
-    mCompilerThreadPool.queue(
-        priority, token, [this, vprogram, key, dynamicOptions, cmh, priority]() mutable {
-            UTILS_UNUSED_WITHOUT_TRACING const CompilerPriorityQueue priorityQueue = priority;
-            FILAMENT_TRACING_EVENT(FILAMENT_TRACING_CATEGORY_FILAMENT,
-                    "asyncPrewarmCache(Job)",
-                    "program", vprogram->programString.c_str_safe(),
-                    "priority", static_cast<uint32_t>(priorityQueue));
-            if (vprogram->isParallelCompilationCanceled()) {
-                FVK_LOGD << "Skipping prewarm for a program that has been destroyed already.";
-                mCallbackManager.put(cmh);
-                return;
-            }
-
-            VkPipeline pipeline = createPipeline(key, dynamicOptions);
-            mCallbackManager.put(cmh);
-            // We don't actually need this pipeline, we just wanted to force the
-            // driver to cache the pipeline's information.
-            if (pipeline != VK_NULL_HANDLE) {
-                vkDestroyPipeline(mDevice, pipeline, VKALLOC);
-                mPrewarmBuilt.fetch_add(1, std::memory_order_relaxed);
-            } else {
-                mPrewarmFailed.fetch_add(1, std::memory_order_relaxed);
-                FVK_LOGW << "Failed to create a pipeline during prewarming, draw-time pipeline "
-                            "creation may fail.";
-            }
-        });
+    // matched == 0: nothing to build yet — registered above, warmed up when its layout's first
+    // class is drawn.
 }
 
 VkPipeline VulkanPipelineCache::createPipeline(
@@ -624,6 +572,7 @@ void VulkanPipelineCache::bindRenderPass(
         int subpassIndex) noexcept {
     mPipelineRequirements.renderPass = renderPass->getVkRenderPass();
     mPipelineRequirements.subpassIndex = subpassIndex;
+    mBoundRenderPass = std::move(renderPass);   // lecodes 0042: a class made from this key owns it
 }
 
 void VulkanPipelineCache::bindPrimitiveTopology(VkPrimitiveTopology topology) noexcept {
@@ -668,11 +617,15 @@ void VulkanPipelineCache::terminate() noexcept {
 
     mPrograms.clear();   // the registry's program refs, before the resource manager goes
     mClasses.clear();
+    mPins.clear();       // lecodes 0042: render-pass refs of jobs the pool never ran or reported
+    mBoundRenderPass = {};
 
     // Prewarmed pipelines nobody adopted (the pool finished after the last gc()).
     {
         std::lock_guard<std::mutex> const lock(mPrewarmedLock);
-        for (auto const& p : mPrewarmed) vkDestroyPipeline(mDevice, p.handle, VKALLOC);
+        for (auto const& p : mPrewarmed) {
+            if (p.handle != VK_NULL_HANDLE) vkDestroyPipeline(mDevice, p.handle, VKALLOC);
+        }
         mPrewarmed.clear();
     }
 
@@ -690,8 +643,8 @@ void VulkanPipelineCache::gc() noexcept {
     // being used by the GPU, and is therefore safe to destroy or reclaim.
     ++mCurrentTime;
 
-    // lecodes 0028: a class not drawn for CLASS_FRESH_FLUSHES goes — its render pass may be evicted
-    // by the FBO cache soon, and a prewarm job must never be handed a dead one.
+    // lecodes 0028: a class not drawn for CLASS_FRESH_FLUSHES goes — nothing prewarms against a
+    // pass the frame stopped using (0042: the class's own ref kept it alive until here).
     for (size_t i = 0; i < mClasses.size();) {
         if (mClasses[i].lastSeen + CLASS_FRESH_FLUSHES < mCurrentTime) {
             mClasses[i] = mClasses.back();
@@ -710,6 +663,8 @@ void VulkanPipelineCache::gc() noexcept {
             ready.swap(mPrewarmed);
         }
         for (auto const& p : ready) {
+            mPins.erase(p.pin);   // lecodes 0042: the job is done with its render pass
+            if (p.handle == VK_NULL_HANDLE) continue;   // failed or cancelled
             if (mPipelines.find(p.key) == mPipelines.end()) {
                 mPipelines.emplace(p.key, PipelineCacheEntry{ p.handle, mCurrentTime });
                 ++mPrewarmAdopted;

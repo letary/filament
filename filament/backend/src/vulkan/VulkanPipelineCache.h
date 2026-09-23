@@ -36,6 +36,7 @@
 #include <atomic>
 #include <mutex>
 #include <type_traits>
+#include <unordered_map>
 #include <vector>
 
 namespace filament::backend {
@@ -287,17 +288,29 @@ private:
     // matter how the driver keys its own cache. Upstream's stand-in pipeline (dynamic rendering,
     // dynamic vertex input, a made-up raster state) never produced a hit on NVIDIA: measured 87–90
     // prewarmed pipelines, the same 20 first-draw pipelines at 330–400 ms with it on or off.
-    // A class is used only while its render pass is certainly alive: seen within CLASS_FRESH_FLUSHES
-    // (VulkanFboCache evicts a render pass after far longer), refreshed on hits by handle.
+    // A class is kept while it is drawn (seen within CLASS_FRESH_FLUSHES, refreshed on hits by
+    // handle). lecodes 0042: it OWNS a ref to its render pass, and every queued job pins one too
+    // (mPins) — the VkRenderPass in the key can no longer be evicted by VulkanFboCache under a job.
+    // Upstream's stand-in prewarm pipeline (dynamic rendering, undefined formats) is gone with 0042:
+    // it crashed the NVIDIA 560.94 shader compiler on the pool thread and never hit anyway.
     struct PipelineClass {
         PipelineKey key;       // shaders + layout zeroed
         Timestamp lastSeen;
         std::vector<VkPipelineLayout> layouts;   // the pipeline layouts drawn with this class
+        resource_ptr<VulkanRenderPass> renderPass;   // == key.renderPass, kept alive by the class
     };
     static constexpr size_t MAX_CLASSES = 32;
-    static constexpr Timestamp CLASS_FRESH_FLUSHES = 30;   // < VulkanFboCache TIME_BEFORE_EVICTION (45)
+    static constexpr Timestamp CLASS_FRESH_FLUSHES = 30;
     std::vector<PipelineClass> mClasses;
     void recordClass(PipelineKey const& real) noexcept;
+    // The render pass behind mPipelineRequirements.renderPass (bindRenderPass) — what a new class
+    // takes its ref from.
+    resource_ptr<VulkanRenderPass> mBoundRenderPass;
+    // Render passes pinned by in-flight prewarm jobs, by job id; released in gc() when the job's
+    // result (built, failed or cancelled — every job reports) is consumed. Driver thread only:
+    // VulkanRenderPass is not a thread-safe resource.
+    std::unordered_map<uint32_t, resource_ptr<VulkanRenderPass>> mPins;
+    uint32_t mNextPin = 0;
     // Every program the frontend created, with its pipeline layout: a class first drawn with that
     // layout prewarms all of them (the muzzle-flash / explosion variants are created at LOAD, before
     // any class exists — they must be picked up when the classes appear). A destroyed program is
@@ -311,7 +324,8 @@ private:
             VkPipelineLayout layout, CompilerPriorityQueue priority);
     struct PrewarmedPipeline {
         PipelineKey key;
-        VkPipeline handle;
+        VkPipeline handle;   // VK_NULL_HANDLE when the job failed or was cancelled
+        uint32_t pin;        // the mPins entry to release
     };
     std::mutex mPrewarmedLock;
     std::vector<PrewarmedPipeline> mPrewarmed;   // built on the pool thread, adopted in gc()
