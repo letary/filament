@@ -802,6 +802,17 @@ function(combine_static_libs TARGET OUTPUT DEPS)
             COMMENT "Combining ${target} dependencies into single shared library"
             VERBATIM
         )
+    elseif (CMAKE_HOST_WIN32)
+        # A cross build on a Windows host (Android): the post-build step runs through cmd.exe, which
+        # cannot execute the bash script — combine with the toolchain's ar in a CMake script.
+        add_custom_command(
+            TARGET ${TARGET} POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" "-DAR=${CMAKE_AR}" "-DOUTPUT=${OUTPUT}"
+                    "-DINPUTS=$<JOIN:${DEPS_FILES},$<COMMA>>"
+                    -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/build/common/combine-static-libs.cmake"
+            COMMENT "Combining ${target} dependencies into single shared library"
+            VERBATIM
+        )
     else()
         add_custom_command(
             TARGET ${TARGET} POST_BUILD
