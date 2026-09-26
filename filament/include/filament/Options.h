@@ -630,6 +630,14 @@ struct TemporalAntiAliasingOptions {
     bool preventFlickering = false;
     /** whether to apply history reprojection (debug option) */
     bool historyReprojection = true;
+    /**
+     * Fragments closer to the camera than this distance (world units) take their history at the SAME
+     * screen position instead of the camera's reprojection: a first-person viewmodel is fixed on screen
+     * while it moves through the world, and the reprojection would fetch its history from where the
+     * world was — a trail on every turn. Reprojection is by the camera only (no per-object motion
+     * vectors), so this band is the way to keep such an object clean. 0 = off. [LeCodes fork]
+     */
+    float nearLimit = 0.0f;
 };
 
 /**
