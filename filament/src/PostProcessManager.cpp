@@ -2911,6 +2911,21 @@ void PostProcessManager::TaaJitterCamera(
     current.projection = inoutCameraInfo->projection * inoutCameraInfo->getUserViewMatrix();
     current.frameId = previous.frameId + 1;
 
+    // the near band (nearLimit): the depth the band's far edge samples as, under this frame's projection,
+    // and which way "nearer" goes in that space — the shader compares the depth it reads against these.
+    // The depth buffer holds clip z / w as is (the [0, 1] clip range on every backend: GL_ZERO_TO_ONE, Vulkan,
+    // Metal — the TAA pass's normalizedToClip maps z by identity), so no [-1, 1] remap here.
+    current.nearLimit = float2{ 0.0f };
+    if (taaOptions.nearLimit > 0.0f) {
+        auto depthAt = [&](double const distance) -> float {
+            double4 const clip = inoutCameraInfo->projection * double4{ 0.0, 0.0, -distance, 1.0 };
+            return float(clip.z / clip.w);
+        };
+        float const edge = depthAt(taaOptions.nearLimit);
+        float const inside = depthAt(taaOptions.nearLimit * 0.5f);
+        current.nearLimit = float2{ edge, inside < edge ? 1.0f : -1.0f };
+    }
+
     auto jitterPosition = [pattern = taaOptions.jitterPattern](size_t const frameIndex) -> float2 {
         using JitterPattern = TemporalAntiAliasingOptions::JitterPattern;
         switch (pattern) {
@@ -3116,6 +3131,7 @@ FrameGraphId<FrameGraphTexture> PostProcessManager::taa(FrameGraph& fg,
                 mi->setParameter("reprojection",
                         mat4f{ historyProjection * inverse(current.projection) } *
                         normalizedToClip);
+                mi->setParameter("nearLimit", current.nearLimit);
 
                 mi->setParameter("colorViewport",
                         float4{
