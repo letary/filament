@@ -36,6 +36,10 @@ struct FrameHistoryEntry {
         FrameGraphTexture::Descriptor desc;
         math::mat4 projection;     // world space to clip space
         math::float2 jitter{};
+        // the near band that skips the reprojection (TemporalAntiAliasingOptions::nearLimit) as the depth
+        // buffer holds it: x = the limit's sampled depth, y = +1 when nearer is a smaller depth, -1 when
+        // larger (reversed Z); y = 0 when the band is off [LeCodes fork]
+        math::float2 nearLimit{};
         uint32_t frameId = 0;   // used for halton sequence
     } taa;
     struct {

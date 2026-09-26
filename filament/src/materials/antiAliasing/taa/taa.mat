@@ -35,6 +35,11 @@ material {
             precision: high
         },
         {
+            type : float2,
+            name : nearLimit,
+            precision: high
+        },
+        {
             type : float,
             name : scale,
             precision: high
@@ -333,11 +338,18 @@ void postProcess(inout PostProcessInputs postProcess) {
     if (materialConstants_historyReprojection) {
         // read the depth buffer center sample for reprojection
         highp float depth = textureLod(materialParams_depth, uv.xy, 0.0).r;
-        // reproject history to current frame
-        uv.zw = uvToRenderTargetUV(uv.zw);
-        highp vec4 q = materialParams.reprojection * vec4(uv.zw, depth, 1.0);
-        uv.zw = (q.xy * (1.0 / q.w)) * 0.5 + 0.5;
-        uv.zw = uvToRenderTargetUV(uv.zw);
+        // the near band (nearLimit, LeCodes fork): a fragment closer than the limit — a first-person
+        // viewmodel, fixed on screen while it moves through the world — keeps its screen position; the
+        // camera's reprojection would fetch its history from where the world was
+        bool nearBand = materialParams.nearLimit.y != 0.0 &&
+                (depth - materialParams.nearLimit.x) * materialParams.nearLimit.y < 0.0;
+        if (!nearBand) {
+            // reproject history to current frame
+            uv.zw = uvToRenderTargetUV(uv.zw);
+            highp vec4 q = materialParams.reprojection * vec4(uv.zw, depth, 1.0);
+            uv.zw = (q.xy * (1.0 / q.w)) * 0.5 + 0.5;
+            uv.zw = uvToRenderTargetUV(uv.zw);
+        }
     }
 
     // read center color and history samples
