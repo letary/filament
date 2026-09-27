@@ -1103,8 +1103,8 @@ bool FAssetLoader::createPrimitive(const cgltf_primitive& inPrim, const char* na
         // The positions accessor is required to have min/max properties, use them to expand
         // the bounding box for this primitive.
         if (atype == cgltf_attribute_type_position) {
-            const float* minp = &innerAccessor->min[0];
-            const float* maxp = &innerAccessor->max[0];
+            float minp[3], maxp[3];
+            utility::getAccessorBounds(innerAccessor, minp, maxp);   // lecodes 0045
             outPrim->aabb.min = min(outPrim->aabb.min, float3(minp[0], minp[1], minp[2]));
             outPrim->aabb.max = max(outPrim->aabb.max, float3(maxp[0], maxp[1], maxp[2]));
         }
@@ -1169,8 +1169,8 @@ bool FAssetLoader::createPrimitive(const cgltf_primitive& inPrim, const char* na
             }
 
             Aabb targetAabb(baseAabb);
-            const float* minp = &innerAccessor->min[0];
-            const float* maxp = &innerAccessor->max[0];
+            float minp[3], maxp[3];
+            utility::getAccessorBounds(innerAccessor, minp, maxp);   // lecodes 0045
 
             // We assume that the range of morph target weight is [0, 1].
             targetAabb.min += float3(minp[0], minp[1], minp[2]);

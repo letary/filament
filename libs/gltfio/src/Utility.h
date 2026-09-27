@@ -51,6 +51,9 @@ void convertBytesToShorts(uint16_t* dst, uint8_t const* src, size_t count);
 uint32_t computeBindingOffset(cgltf_accessor const* accessor);
 bool requiresConversion(cgltf_accessor const* accessor);
 bool requiresPacking(cgltf_accessor const* accessor);
+// lecodes 0045: a POSITION accessor's bounds in the units the shader sees. accessor.min / max hold the values STORED
+// in the buffer, so a normalized integer accessor (KHR_mesh_quantization) carries raw integers there.
+void getAccessorBounds(cgltf_accessor const* accessor, float outMin[3], float outMax[3]);
 bool loadCgltfBuffers(cgltf_data const* gltf, char const* gltfPath,
         UriDataCacheHandle uriDataCacheHandle);
 

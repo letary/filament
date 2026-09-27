@@ -420,8 +420,8 @@ bool AssetLoaderExtended::createPrimitive(Input* input, Output* out,
         // The positions accessor is required to have min/max properties, use them to expand
         // the bounding box for this primitive.
         if (atype == cgltf_attribute_type_position) {
-            const float* minp = &accessor->min[0];
-            const float* maxp = &accessor->max[0];
+            float minp[3], maxp[3];
+            utility::getAccessorBounds(accessor, minp, maxp);   // lecodes 0045
             out->aabb.min = min(out->aabb.min, float3(minp[0], minp[1], minp[2]));
             out->aabb.max = max(out->aabb.max, float3(maxp[0], maxp[1], maxp[2]));
         }
@@ -474,8 +474,8 @@ bool AssetLoaderExtended::createPrimitive(Input* input, Output* out,
 
             if (atype == cgltf_attribute_type_position && accessor->has_min && accessor->has_max) {
                 Aabb targetAabb(baseAabb);
-                float const* minp = &accessor->min[0];
-                float const* maxp = &accessor->max[0];
+                float minp[3], maxp[3];
+                utility::getAccessorBounds(accessor, minp, maxp);   // lecodes 0045
 
                 // We assume that the range of morph target weight is [0, 1].
                 targetAabb.min += float3(minp[0], minp[1], minp[2]);

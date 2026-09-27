@@ -244,6 +244,29 @@ bool requiresPacking(cgltf_accessor const* accessor) {
     }
 }
 
+void getAccessorBounds(cgltf_accessor const* accessor, float outMin[3], float outMax[3]) {
+    float scale = 1.0f;
+    bool isSigned = false;
+    if (accessor->normalized) {
+        switch (accessor->component_type) {
+            case cgltf_component_type_r_8:   scale = 1.0f / 127.0f;   isSigned = true; break;
+            case cgltf_component_type_r_8u:  scale = 1.0f / 255.0f;   break;
+            case cgltf_component_type_r_16:  scale = 1.0f / 32767.0f; isSigned = true; break;
+            case cgltf_component_type_r_16u: scale = 1.0f / 65535.0f; break;
+            default: break;
+        }
+    }
+    for (int i = 0; i < 3; i++) {
+        outMin[i] = accessor->min[i] * scale;
+        outMax[i] = accessor->max[i] * scale;
+        // the most negative integer decodes to -1 as well
+        if (isSigned) {
+            outMin[i] = outMin[i] < -1.0f ? -1.0f : outMin[i];
+            outMax[i] = outMax[i] < -1.0f ? -1.0f : outMax[i];
+        }
+    }
+}
+
 bool loadCgltfBuffers(cgltf_data const* gltf, char const* gltfPath,
         UriDataCacheHandle uriDataCacheHandle) {
     FILAMENT_TRACING_CONTEXT(FILAMENT_TRACING_CATEGORY_GLTFIO);
