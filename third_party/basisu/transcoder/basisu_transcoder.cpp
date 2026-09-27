@@ -249,6 +249,7 @@ namespace basist
 #endif
 	}
 	
+#if BASISD_SUPPORT_XUASTC
 	// Used by arith encoder/decoder
 	namespace arith_fastbits_f32
 	{
@@ -256,6 +257,7 @@ namespace basist
 		float g_lut_edge[TABLE_SIZE + 1]; // samples at m = 1 + i/TABLE_SIZE (for linear)
 
 	} // namespace arith_fastbits_f32
+#endif // BASISD_SUPPORT_XUASTC
 
 	inline uint16_t byteswap_uint16(uint16_t v)
 	{
@@ -39365,6 +39367,8 @@ void encode_pvrtc1(
 
 #endif // BASISD_SUPPORT_XUASTC
 
+// The helpers of the XUASTC transcode below: they name what only XUASTC declares.
+#if BASISD_SUPPORT_XUASTC
 static inline bool blocks_same_solid_colors(const astc_helpers::log_astc_block& a, const astc_helpers::log_astc_block& b, uint32_t tol)
 {
 	if ((!a.m_solid_color_flag_ldr) || (!b.m_solid_color_flag_ldr))
@@ -39484,6 +39488,8 @@ static void astc_upsample_grid_weights(const astc_helpers::log_astc_block& log_b
 		memcpy(pDst_weights, dequantized_weights, block_width * block_height);
 	}
 }
+
+#endif // BASISD_SUPPORT_XUASTC
 
 bool basisu_lowlevel_xuastc_ldr_transcoder::transcode_slice(
 	basis_tex_format src_format, bool use_astc_srgb_decode_profile,
