@@ -103,7 +103,8 @@ static void prepareConfig(MaterialKey* config, const char* label) {
 
 class UbershaderProvider : public MaterialProvider {
 public:
-    UbershaderProvider(Engine* engine, const void* archive, size_t archiveByteCount);
+    UbershaderProvider(Engine* engine, const void* archive, size_t archiveByteCount,
+            Material::Builder::ShadowSamplingQuality shadowSamplingQuality);
     ~UbershaderProvider() {}
 
     MaterialInstance* createMaterialInstance(MaterialKey* config, UvMap* uvmap,
@@ -134,8 +135,9 @@ public:
     Engine* const mEngine;
 };
 
-UbershaderProvider::UbershaderProvider(Engine* engine, const void* archive, size_t archiveByteCount)
-        : mMaterials(*engine), mEngine(engine) {
+UbershaderProvider::UbershaderProvider(Engine* engine, const void* archive, size_t archiveByteCount,
+        Material::Builder::ShadowSamplingQuality shadowSamplingQuality)
+        : mMaterials(*engine, shadowSamplingQuality), mEngine(engine) {
     static unsigned char texels[4] = {};
     mDummyTexture = Texture::Builder()
             .width(1).height(1)
@@ -394,8 +396,8 @@ MaterialInstance* UbershaderProvider::createMaterialInstance(MaterialKey* config
 namespace filament::gltfio {
 
 MaterialProvider* createUbershaderProvider(Engine* engine, const void* archive,
-        size_t archiveByteCount) {
-    return new UbershaderProvider(engine, archive, archiveByteCount);
+        size_t archiveByteCount, Material::Builder::ShadowSamplingQuality shadowSamplingQuality) {
+    return new UbershaderProvider(engine, archive, archiveByteCount, shadowSamplingQuality);
 }
 
 } // namespace filament::gltfio

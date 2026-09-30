@@ -38,7 +38,10 @@ namespace filament::gltfio {
     // set of requirements. Used by gltfio; users do not need to access this class directly.
     class ArchiveCache {
     public:
-        ArchiveCache(Engine& engine) : mEngine(engine) {}
+        // lecodes 0047: the PCF filter every material of the archive is built with
+        ArchiveCache(Engine& engine, Material::Builder::ShadowSamplingQuality shadowSamplingQuality =
+                Material::Builder::ShadowSamplingQuality::LOW)
+                : mEngine(engine), mShadowSamplingQuality(shadowSamplingQuality) {}
         ~ArchiveCache();
 
         void load(const void* archiveData, uint64_t archiveByteCount);
@@ -51,6 +54,7 @@ namespace filament::gltfio {
 
     private:
         Engine& mEngine;
+        Material::Builder::ShadowSamplingQuality mShadowSamplingQuality;
         utils::FixedCapacityVector<Material*> mMaterials;
         uberz::ReadableArchive* mArchive = nullptr;
     };
