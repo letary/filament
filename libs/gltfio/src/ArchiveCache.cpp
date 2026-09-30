@@ -158,6 +158,7 @@ Material* ArchiveCache::getMaterial(const ArchiveRequirements& reqs) {
             if (mMaterials[i] == nullptr) {
                 mMaterials[i] = Material::Builder()
                     .package(spec.package, spec.packageByteCount)
+                    .shadowSamplingQuality(mShadowSamplingQuality)   // lecodes 0047
                     .build(mEngine);
             }
 
@@ -174,6 +175,7 @@ Material* ArchiveCache::getDefaultMaterial() {
     if (mMaterials[0] == nullptr) {
         mMaterials[0] = Material::Builder()
             .package(mArchive->specs[0].package, mArchive->specs[0].packageByteCount)
+            .shadowSamplingQuality(mShadowSamplingQuality)   // lecodes 0047
             .build(mEngine);
     }
     return mMaterials[0];

@@ -212,13 +212,17 @@ MaterialProvider* createJitShaderProvider(Engine* engine, bool optimizeShaders =
 /**
  * Creates a material provider that loads a small set of pre-built materials.
  *
+ * @param shadowSamplingQuality The PCF filter the materials are built with (lecodes 0047):
+ *                              the application picks it, as it does for its own materials.
  * @return New material provider that can quickly load a material from a cache.
  *
  * @see createJitShaderProvider
  */
 UTILS_PUBLIC
 MaterialProvider* createUbershaderProvider(Engine* engine, const void* archive,
-        size_t archiveByteCount);
+        size_t archiveByteCount,
+        Material::Builder::ShadowSamplingQuality shadowSamplingQuality =
+                Material::Builder::ShadowSamplingQuality::LOW);
 
 } // namespace filament::gltfio
 
