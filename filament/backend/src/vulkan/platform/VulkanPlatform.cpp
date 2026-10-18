@@ -34,6 +34,7 @@
 #include <utils/PrivateImplementation-impl.h>
 
 #include <algorithm>
+#include <string>
 #include <iterator>
 
 using namespace utils;
@@ -433,7 +434,10 @@ VkPhysicalDevice selectPhysicalDevice(VkInstance instance,
         VkPhysicalDevice device = VK_NULL_HANDLE;
         VkPhysicalDeviceType deviceType = VK_PHYSICAL_DEVICE_TYPE_OTHER;
         int8_t index = -1;
-        std::string_view name;
+        // A COPY of the name: the properties it came from are a local of the loop below, and a
+        // string_view into them dangled by the time the sort compared names (every entry then read
+        // whatever the dead stack slot held, so a GPUPreference.deviceName never chose a device).
+        std::string name;
     };
     FixedCapacityVector<DeviceInfo> deviceList(physicalDevices.size());
 
