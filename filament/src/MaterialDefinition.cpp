@@ -790,6 +790,41 @@ Program MaterialDefinition::getSurfaceProgram(FEngine& engine, MaterialParser co
     return pb;
 }
 
+Program::PipelineHint MaterialDefinition::prewarmHint(uint32_t const family,
+        Variant const variant) const noexcept {
+    using Kind = Program::PipelineHint::Kind;
+    Program::PipelineHint hint;
+    hint.family = family;
+    if (materialDomain != MaterialDomain::SURFACE) {
+        hint.rasterState = rasterState;
+        return hint;   // Kind::OTHER, not predictable
+    }
+    hint.predictable = true;
+    if (Variant::isValidDepthVariant(variant)) {
+        // RenderPass::generateCommandsImpl, the depth command (the shadow / structure / picking passes)
+        hint.kind = Kind::DEPTH;
+        RasterState rs{};
+        rs.colorWrite = Variant::isPickingVariant(variant) || Variant::isDepthMomentsVariant(variant);
+        rs.depthWrite = true;
+        rs.depthFunc = RasterState::DepthFunc::GE;
+        rs.alphaToCoverage = false;
+        hint.rasterState = rs;
+        return hint;
+    }
+    // RenderPass::setupColorCommand: the material's state; in the SSR pass an opaque's blending is off
+    hint.kind = Variant::isSSRVariant(variant) ? Kind::SSR : Kind::COLOR;
+    hint.rasterState = rasterState;
+    if (Variant::isSSRVariant(variant)) {
+        bool const blending = refractionMode != RefractionMode::SCREEN_SPACE
+                && blendingMode != BlendingMode::OPAQUE && blendingMode != BlendingMode::MASKED;
+        if (!blending) {
+            hint.rasterState.blendFunctionSrcAlpha = BlendFunction::ONE;
+            hint.rasterState.blendFunctionDstAlpha = BlendFunction::ZERO;
+        }
+    }
+    return hint;
+}
+
 Program MaterialDefinition::getProgramWithVariants(FEngine const& engine,
         MaterialParser const& parser,
         ProgramSpecialization const& specialization,
@@ -877,6 +912,10 @@ Program MaterialDefinition::getProgramWithVariants(FEngine const& engine,
     // specialization, but there may be clients which depend on this value being stable across
     // versions.
     program.cacheId(hash::combine(size_t(cacheId), variant.key));
+
+    // lecodes 0050: the Vulkan prewarm's pairing — the family is the material package (programs are
+    // shared across the materials made from it, ProgramSpecialization), the state is the draw's.
+    program.pipelineHint(prewarmHint(specialization.materialCrc32, variant));
 
     return program;
 }

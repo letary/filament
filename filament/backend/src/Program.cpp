@@ -104,6 +104,11 @@ Program& Program::multiview(bool const multiview) noexcept {
     return *this;
 }
 
+Program& Program::pipelineHint(PipelineHint const& hint) noexcept {
+    mPipelineHint = hint;
+    return *this;
+}
+
 io::ostream& operator<<(io::ostream& out, const Program& builder) {
     out << "Program{";
     if (builder.mLogger) {

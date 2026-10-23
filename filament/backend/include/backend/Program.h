@@ -120,6 +120,21 @@ public:
 
     Program& multiview(bool multiview) noexcept;
 
+    // lecodes 0050: what a backend's pipeline prewarm pairs this program with (the Vulkan backend's
+    // VulkanPipelineCache; the others ignore it). `family` is the material definition the program
+    // was compiled from: its programs share one raster state and draw in the same passes. `kind` is
+    // the pass the variant is for, `rasterState` the state a draw of it carries, as RenderPass sets
+    // it, and `predictable` says the backend may build it in a pass of its kind before it was ever
+    // drawn (surface materials; a post-process material draws in its own pass, in the first frames).
+    struct PipelineHint {
+        enum class Kind : uint8_t { COLOR, DEPTH, SSR, OTHER };
+        uint32_t family = 0;
+        Kind kind = Kind::OTHER;
+        bool predictable = false;
+        RasterState rasterState{};
+    };
+    Program& pipelineHint(PipelineHint const& hint) noexcept;
+
     // For ES2 support only...
     Program& uniforms(uint32_t index, utils::CString name, UniformInfo uniforms);
     Program& attributes(AttributesInfo attributes) noexcept;
@@ -141,6 +156,8 @@ public:
     bool isMultiview() const noexcept { return mMultiview; }
 
     CompilerPriorityQueue getPriorityQueue() const noexcept { return mPriorityQueue; }
+
+    PipelineHint const& getPipelineHint() const noexcept { return mPipelineHint; }
 
     SpecializationConstantsInfo const& getSpecializationConstants() const noexcept {
         return mSpecializationConstants;
@@ -206,6 +223,8 @@ private:
     // determine whether shader code replacement for the num_views should be performed.
     // This variable could be promoted as a more generic variable later if other similar needs occur.
     bool mMultiview = false;
+
+    PipelineHint mPipelineHint;   // lecodes 0050
 };
 
 } // namespace filament::backend

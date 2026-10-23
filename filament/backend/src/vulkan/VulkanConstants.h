@@ -204,26 +204,11 @@ constexpr static const int FVK_REQUIRED_VERSION_MINOR = 1;
 // Heuristic: Triple Buffering (3) multiplied by maximum number of renderpasses (15).
 constexpr static const int FVK_MAX_COMMAND_BUFFERS = 3 * 15;
 
-// Number of command buffer submissions that should occur before an unused pipeline is removed
-// from the cache.
-//
-// If this number is low, VkPipeline construction will occur frequently, which can
-// be extremely slow. If this number is high, the memory footprint will be large.
-//
-// lecodes 0049: the age of a pipeline NOBODY DREW — one the prewarm thread built against a class its
-// program never meets (0028 builds every program of a layout against every class drawn with it). A
-// pipeline that was bound for a draw is never evicted (VulkanPipelineCache::gc), and neither is a
-// VkRenderPass (VulkanFboCache::gc): at 45 flushes (~0.6 s) anything off screen for a second — a
-// shower's structure pass, a rarely seen material — came back as a draw-time vkCreateGraphicsPipelines
-// under a NEW render-pass handle, and the prewarm thread rebuilt the evicted set every time a class
-// was recorded again (dirty-road: 4000+ prewarm builds a ride, a draw-time build every few seconds).
-// The drawn set is what a game uses: a few hundred pipelines.
-constexpr static const int FVK_MAX_PIPELINE_AGE = FVK_MAX_COMMAND_BUFFERS;
-
-// VulkanPipelineCache does not track which command buffers contain references to which pipelines,
-// instead it simply waits for at least FVK_MAX_COMMAND_BUFFERS submissions to occur before
-// destroying any unused pipeline object.
-static_assert(FVK_MAX_PIPELINE_AGE >= FVK_MAX_COMMAND_BUFFERS);
+// lecodes 0049 / 0050: FVK_MAX_PIPELINE_AGE is gone — VulkanPipelineCache evicts nothing. Every pipeline
+// it holds was asked for by a draw or will be (the prewarm pairs a program with its own material's
+// classes: VulkanPipelineCache.h), and a VkRenderPass is kept for the engine's lifetime too (a
+// pipeline is keyed by the pass HANDLE; a reused value would bind it to an incompatible pass).
+// Upstream's 45 flushes (~0.6 s) made anything off screen for a second a draw-time build.
 
 // creator-gl patch 0010: a host that shares this engine's VkQueue with another producer (the desktop
 // tgfx compositor) installs lock/unlock hooks via filament_vk_setQueueLock(); every vkQueueSubmit /

@@ -188,6 +188,10 @@ private:
     backend::Program getSurfaceProgram(FEngine& engine, MaterialParser const& parser,
             ProgramSpecialization const& specialization) const noexcept;
 
+    // lecodes 0050: the Vulkan prewarm's hint for a program of this variant (backend::Program::PipelineHint):
+    // the pass kind, and the raster state RenderPass gives a draw of it.
+    backend::Program::PipelineHint prewarmHint(uint32_t family, Variant variant) const noexcept;
+
     backend::Program getProgramWithVariants(FEngine const& engine, MaterialParser const& parser,
             ProgramSpecialization const& specialization, Variant vertexVariant,
             Variant fragmentVariant) const;

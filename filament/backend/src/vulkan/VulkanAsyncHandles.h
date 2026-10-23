@@ -82,6 +82,7 @@ struct VulkanProgram : public HwProgram, fvkmemory::ThreadSafeResource {
     ~VulkanProgram();
 
     utils::CString programString;
+    Program::PipelineHint hint;   // lecodes 0050: what the pipeline prewarm pairs this program with
 
     /**
      * Cancels any parallel compilation jobs that have not yet run for this

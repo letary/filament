@@ -228,19 +228,14 @@ private:
     #pragma clang diagnostic pop
 #endif
 
-    // The timestamp associated with a given cache entry represents time as a count of flush
-    // events since the cache was constructed. If any cache entry was most recently used over
-    // FVK_MAX_PIPELINE_AGE flushes in the past, then we can be sure that it is no longer
-    // being used by the GPU, and is therefore safe to destroy or reclaim.
+    // A count of flush events since the cache was constructed: the LRU order of the class table and
+    // the log's clock. lecodes 0050: nothing is evicted by age any more (below).
     using Timestamp = uint64_t;
     Timestamp mCurrentTime = 0;
 
     struct PipelineCacheEntry {
         VkPipeline handle;
         Timestamp lastUsed;
-        // lecodes 0049: bound for a draw at least once — never evicted; a prewarmed pipeline nobody
-        // drew goes after FVK_MAX_PIPELINE_AGE flushes (VulkanConstants.h).
-        bool drawn = false;
     };
 
     using PipelineMap = tsl::robin_map<PipelineKey, PipelineCacheEntry,
@@ -311,31 +306,55 @@ private:
     // a flush that built any, and from terminate().
     std::atomic<uint32_t> mPrewarmBuilt{0};
     std::atomic<uint32_t> mPrewarmFailed{0};
-    // lecodes 0028: pipeline CLASSES = a real draw-time key minus its program (shaders, layout),
-    // recorded on every cache miss. A new program is prewarmed against the fresh classes with the
-    // exact pipeline the draw will ask for (static vertex input, the real render pass, the real
-    // raster state), and the finished pipeline is handed to the draw thread (mPrewarmed -> gc())
-    // instead of thrown away — so the draw finds it in mPipelines and never asks the driver, no
-    // matter how the driver keys its own cache. Upstream's stand-in pipeline (dynamic rendering,
-    // dynamic vertex input, a made-up raster state) never produced a hit on NVIDIA: measured 87–90
-    // prewarmed pipelines, the same 20 first-draw pipelines at 330–400 ms with it on or off.
-    // A class is kept until MAX_CLASSES newer ones push it out (lecodes 0049: no age — it used to go
-    // after 30 flushes, so a program created between two showers was never prewarmed against the
-    // structure pass; 128 slots: dirty-road records 82 classes, and kept 32 always full). lecodes 0042: it OWNS a ref
-    // to its render pass, and every queued job pins one too
-    // (mPins) — the VkRenderPass in the key can no longer be evicted by VulkanFboCache under a job.
-    // Upstream's stand-in prewarm pipeline (dynamic rendering, undefined formats) is gone with 0042:
-    // it crashed the NVIDIA 560.94 shader compiler on the pool thread and never hit anyway.
+    // lecodes 0028 / 0050: pipeline CLASSES = a real draw-time key minus its program (shaders, layout),
+    // recorded on every cache miss. A prewarm job builds the EXACT pipeline a draw will ask for (the
+    // real render pass, raster state, static vertex input) and hands it to the draw thread
+    // (mPrewarmed -> gc()), which adopts it into mPipelines — so the draw never asks the driver,
+    // whatever the driver's own cache does. Upstream's stand-in pipeline (dynamic rendering, dynamic
+    // vertex input, a made-up raster state) never produced a hit on NVIDIA (measured: 87–90 prewarmed,
+    // the same 20 first-draw pipelines at 330–400 ms with it on or off) and is gone since 0042 (it
+    // also crashed the NVIDIA 560.94 compiler on the pool thread).
+    //
+    // 0050: WHICH program goes with WHICH class. A program carries a hint from the frontend
+    // (Program::pipelineHint): its FAMILY (the material package it was compiled from — one raster
+    // state, the same passes), the pass KIND of its variant (colour / depth / ssr) and the raster
+    // state a draw of it carries. A class remembers the (family, layout) pairs drawn in it and the
+    // kind of its first draw. A program is built against
+    //   - the classes its own (family, layout) pair was drawn in: exact;
+    //   - when that pair was never drawn (a material created at load and first shown minutes later):
+    //     a PREDICTED key in every class of its kind that its LAYOUT (sampler signature + skinning)
+    //     was drawn in — the class's render pass, target, samples and depth bias with the hint's
+    //     blend / write / cull / depth bits (predictedRasterState). Exact for the depth passes and
+    //     the colour pass; a wrong guess costs one small pipeline, and the draw-time miss records
+    //     the real pair. Post-process programs are never predicted (their own pass, drawn at once).
+    //     Measured on dirty-road: by kind alone the prediction built 6000 pipelines (every family x
+    //     every shadow cascade's bias class x every layout), with the layout ~N (the log's numbers).
+    // 0028 paired by LAYOUT alone — every program of a layout against every class drawn with it —
+    // which built 3000 pipelines for 170 drawn on dirty-road and leaned on the 45-flush eviction to
+    // shed them, which also shed the prewarm of anything first shown a second later. Nothing is
+    // evicted now: every pipeline here was asked for or will be.
+    // A class is kept until MAX_CLASSES newer ones push it out (no age since 0049; dirty-road records
+    // 77). lecodes 0042: it OWNS a ref to its render pass, and every queued job pins one too (mPins)
+    // — the VkRenderPass in the key cannot be destroyed under a job.
+    using Kind = Program::PipelineHint::Kind;
+    struct Pairing {
+        uint32_t family;
+        VkPipelineLayout layout;
+    };
     struct PipelineClass {
         PipelineKey key;       // shaders + layout zeroed
         Timestamp lastSeen;
-        std::vector<VkPipelineLayout> layouts;   // the pipeline layouts drawn with this class
+        Kind kind;             // of the first program drawn in it
+        std::vector<Pairing> pairings;   // the (family, layout) pairs drawn in this class
         resource_ptr<VulkanRenderPass> renderPass;   // == key.renderPass, kept alive by the class
     };
     static constexpr size_t MAX_CLASSES = 128;
-    uint32_t mClassesRecorded = 0;   // lecodes 0049: every insert, for the log (> MAX_CLASSES = the table thrashes)
+    uint32_t mClassesRecorded = 0;   // every insert, for the log (> MAX_CLASSES = the table thrashes)
     std::vector<PipelineClass> mClasses;
+    uint32_t mBoundFamily = 0;       // the bound program's hint (bindProgram): what recordClass pairs
+    Kind mBoundKind = Kind::OTHER;
     void recordClass(PipelineKey const& real) noexcept;
+    bool pairKnown(uint32_t family, VkPipelineLayout layout) const noexcept;
     // The render pass behind mStaticPipelineKey.renderPass (bindRenderPass) — what a new class
     // takes its ref from.
     resource_ptr<VulkanRenderPass> mBoundRenderPass;
@@ -344,17 +363,27 @@ private:
     // VulkanRenderPass is not a thread-safe resource.
     std::unordered_map<uint32_t, resource_ptr<VulkanRenderPass>> mPins;
     uint32_t mNextPin = 0;
-    // Every program the frontend created, with its pipeline layout: a class first drawn with that
-    // layout prewarms all of them (the muzzle-flash / explosion variants are created at LOAD, before
-    // any class exists — they must be picked up when the classes appear). A destroyed program is
-    // dropped at the next scan (cancelParallelCompilation marks it).
+    // Every program the frontend created, with its pipeline layout. A destroyed program is dropped
+    // at the next scan (cancelParallelCompilation marks it).
     struct LiveProgram {
         resource_ptr<VulkanProgram> program;
         VkPipelineLayout layout;
     };
     std::vector<LiveProgram> mPrograms;
+    // The exact pipeline of a program in a class its pair was drawn in.
     void prewarmClass(PipelineClass const& cls, resource_ptr<VulkanProgram> const& vprogram,
             VkPipelineLayout layout, CompilerPriorityQueue priority);
+    // The predicted pipeline of a program whose pair was never drawn, in a class of its kind.
+    void predictClass(PipelineClass const& cls, resource_ptr<VulkanProgram> const& vprogram,
+            VkPipelineLayout layout, CompilerPriorityQueue priority);
+    // Queue one key for the pool, unless the pipeline exists or the key is already queued.
+    bool prewarmKey(PipelineKey const& key, resource_ptr<VulkanRenderPass> const& renderPass,
+            resource_ptr<VulkanProgram> const& vprogram, CompilerPriorityQueue priority);
+    // The class's raster state (samples, target count, depth clamp, bias) with the hint's blend /
+    // write bits, and its cull / depth bits where those are static on this device.
+    RasterState predictedRasterState(backend::RasterState const& hint,
+            RasterState const& cls) const noexcept;
+    std::unordered_set<size_t> mQueued;   // key hashes queued to the pool and not yet adopted
     struct PrewarmedPipeline {
         PipelineKey key;
         VkPipeline handle;   // VK_NULL_HANDLE when the job failed or was cancelled
@@ -363,15 +392,14 @@ private:
     std::mutex mPrewarmedLock;
     std::vector<PrewarmedPipeline> mPrewarmed;   // built on the pool thread, adopted in gc()
     uint32_t mPrewarmAdopted = 0;
+    uint32_t mPrewarmPredicted = 0;   // of the queued jobs, the predictions (the log)
     uint32_t mFlushMisses = 0;
     double mFlushMissMs = 0.0;
     uint32_t mTotalMisses = 0;
     double mTotalMissMs = 0.0;
-    // lecodes 0049: WHY a draw-time build happened — the exact key was built before and evicted
-    // (rebuilt: a VkPipelineCache hit, cheap whatever the driver's disk cache holds), and whether it
-    // cost a real compile (>= 2 ms here: the kind a first run without a driver cache pays tens of ms for).
-    std::unordered_set<size_t> mEverBuilt;   // hashes of every key built (draw time or prewarm)
-    uint32_t mFlushRebuilt = 0, mFlushSlow = 0, mTotalRebuilt = 0, mTotalSlow = 0;
+    // How many draw-time builds cost a real compile (>= 2 ms here: what a first run without a driver
+    // cache pays tens of ms for); the rest are driver-cache hits.
+    uint32_t mFlushSlow = 0, mTotalSlow = 0;
 
     // Name of the bound program, used for perfetto tracing.
     utils::CString mBoundProgram;

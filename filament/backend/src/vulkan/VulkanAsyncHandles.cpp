@@ -116,6 +116,7 @@ VulkanProgram::VulkanProgram(VulkanContext const& context, VkDevice device,
     utils::io::sstream ss;
     ss << builder;
     programString = utils::CString(ss.c_str());
+    hint = builder.getPipelineHint();   // lecodes 0050
 
     Program::ShaderSource const& blobs = builder.getShadersSource();
     auto& modules = mInfo->shaders;

@@ -184,7 +184,6 @@ VulkanPipelineCache::PipelineCacheEntry* VulkanPipelineCache::getOrCreatePipelin
             pipelineIter != mPipelines.end()) {
         auto& pipeline = pipelineIter.value();
         pipeline.lastUsed = mCurrentTime;
-        pipeline.drawn = true;   // lecodes 0049
         FILAMENT_TRACING_EVENT(FILAMENT_TRACING_CATEGORY_FILAMENT,
                 "Pipeline(Hit)", "program", mBoundProgram.c_str_safe());
         // lecodes 0028: keep the classes drawn with this render pass fresh (handle compare only).
@@ -195,19 +194,15 @@ VulkanPipelineCache::PipelineCacheEntry* VulkanPipelineCache::getOrCreatePipelin
     }
     FILAMENT_TRACING_EVENT(FILAMENT_TRACING_CATEGORY_FILAMENT,
             "Pipeline(Miss)", "program", mBoundProgram.c_str_safe());
-    // lecodes 0049: built before and evicted, or never built in this process?
-    bool const rebuilt = !mEverBuilt.insert(PipelineHashFn{}(mStaticPipelineKey)).second;
     auto const t0 = std::chrono::steady_clock::now();
     PipelineCacheEntry cacheEntry {
         .handle = createPipeline(mStaticPipelineKey),
         .lastUsed = mCurrentTime,
-        .drawn = true,
     };
     double const ms = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - t0).count();
     ++mFlushMisses; mFlushMissMs += ms;
     ++mTotalMisses; mTotalMissMs += ms;
-    if (rebuilt) { ++mFlushRebuilt; ++mTotalRebuilt; }
     if (ms >= 2.0) { ++mFlushSlow; ++mTotalSlow; }
     recordClass(mStaticPipelineKey);
     if (ms >= 2.0) {   // lecodes 0049: the same threshold as the "compiled" count (was 5)
@@ -238,15 +233,12 @@ void VulkanPipelineCache::recordClass(PipelineKey const& real) noexcept {
     }
     if (cls == nullptr) {
         // lecodes 0042: the class OWNS a ref to its render pass (the bound one — the key was
-        // built from it), so VulkanFboCache cannot evict the VkRenderPass a queued prewarm job
-        // will hand to vkCreateGraphicsPipelines. 0028 relied on CLASS_FRESH_FLUSHES (30) being
-        // under the FBO cache's eviction age (45), which holds only while the compiler thread
-        // keeps up: a burst of new programs queues seconds of builds, and a job that runs after
-        // its pass was evicted feeds the driver a dead handle.
+        // built from it), so the VkRenderPass a queued prewarm job will hand to
+        // vkCreateGraphicsPipelines cannot be destroyed under it.
         assert_invariant(mBoundRenderPass && mBoundRenderPass->getVkRenderPass() == real.renderPass);
         ++mClassesRecorded;
         if (mClasses.size() < MAX_CLASSES) {
-            mClasses.push_back({ k, mCurrentTime, {}, mBoundRenderPass });
+            mClasses.push_back({ k, mCurrentTime, mBoundKind, {}, mBoundRenderPass });
             cls = &mClasses.back();
         } else {
             // Full: the least recently seen class gives way.
@@ -254,30 +246,75 @@ void VulkanPipelineCache::recordClass(PipelineKey const& real) noexcept {
             for (auto it = mClasses.begin(); it != mClasses.end(); ++it) {
                 if (it->lastSeen < oldest->lastSeen) oldest = it;
             }
-            *oldest = { k, mCurrentTime, {}, mBoundRenderPass };
+            *oldest = { k, mCurrentTime, mBoundKind, {}, mBoundRenderPass };
             cls = &*oldest;
         }
     }
     cls->lastSeen = mCurrentTime;
-    for (auto l : cls->layouts) {
-        if (l == real.layout) return;   // a known pairing: nothing new to prewarm
+    for (auto const& p : cls->pairings) {
+        if (p.family == mBoundFamily && p.layout == real.layout) return;   // a known pair: nothing new
     }
-    cls->layouts.push_back(real.layout);
+    bool layoutNew = true;   // the first draw of this LAYOUT in this class (any family)
+    for (auto const& p : cls->pairings) {
+        if (p.layout == real.layout) { layoutNew = false; break; }
+    }
+    cls->pairings.push_back({ mBoundFamily, real.layout });
 
-    // This class was just drawn with this layout for the first time: every live program of the
-    // same layout gets its pipeline for it now, in the background — except the one that just
-    // built it at draw time.
+    // lecodes 0050: this (family, layout) was just drawn in this class for the first time: its
+    // siblings — the other variants of the same material — get the exact pipeline now, in the
+    // background. The first draw of a LAYOUT in a class also gets a predicted pipeline for every
+    // registered program of that layout and this kind whose own pair was never drawn (created at
+    // load, not shown yet): the layout is the sampler signature + skinning, so a program is only
+    // predicted where materials shaped like its own already draw.
     for (size_t i = mPrograms.size(); i-- > 0;) {
         auto const& p = mPrograms[i];
         if (p.program->isParallelCompilationCanceled()) {
             mPrograms.erase(mPrograms.begin() + i);
             continue;
         }
-        if (p.layout != real.layout) continue;
         if (p.program->getVertexShader() == real.shaders[0]
-                && p.program->getFragmentShader() == real.shaders[1]) continue;
-        prewarmClass(*cls, p.program, p.layout, CompilerPriorityQueue::LOW);
+                && p.program->getFragmentShader() == real.shaders[1]) continue;   // the one just built
+        auto const& hint = p.program->hint;
+        if (hint.family == mBoundFamily && p.layout == real.layout) {
+            prewarmClass(*cls, p.program, p.layout, CompilerPriorityQueue::LOW);
+        } else if (layoutNew && p.layout == real.layout && hint.predictable
+                && hint.kind == cls->kind && !pairKnown(hint.family, p.layout)) {
+            predictClass(*cls, p.program, p.layout, CompilerPriorityQueue::LOW);
+        }
     }
+}
+
+bool VulkanPipelineCache::pairKnown(uint32_t family, VkPipelineLayout layout) const noexcept {
+    for (auto const& c : mClasses) {
+        for (auto const& p : c.pairings) {
+            if (p.family == family && p.layout == layout) return true;
+        }
+    }
+    return false;
+}
+
+VulkanPipelineCache::RasterState VulkanPipelineCache::predictedRasterState(
+        backend::RasterState const& h, RasterState const& cls) const noexcept {
+    // The same conversion as VulkanDriver::bindPipeline. What the target / the pass decides stays the
+    // class's: rasterizationSamples, colorTargetCount, depthClamp, depthBiasEnable and the bias.
+    RasterState rs = cls;
+    rs.blendEnable = h.hasBlending();
+    rs.alphaToCoverageEnable = h.alphaToCoverage;
+    rs.srcColorBlendFactor = fvkutils::getBlendFactor(h.blendFunctionSrcRGB);
+    rs.dstColorBlendFactor = fvkutils::getBlendFactor(h.blendFunctionDstRGB);
+    rs.srcAlphaBlendFactor = fvkutils::getBlendFactor(h.blendFunctionSrcAlpha);
+    rs.dstAlphaBlendFactor = fvkutils::getBlendFactor(h.blendFunctionDstAlpha);
+    rs.colorWriteMask = (VkColorComponentFlags) (h.colorWrite ? 0xf : 0x0);
+    rs.colorBlendOp = h.blendEquationRGB;
+    rs.alphaBlendOp = h.blendEquationAlpha;
+    if (!mHasDynamicState) {
+        // Static on this device (bindRasterState); dynamic otherwise, zero in the static key.
+        rs.cullMode = fvkutils::getCullMode(h.culling);
+        rs.frontFace = fvkutils::getFrontFace(h.inverseFrontFaces);
+        rs.depthWriteEnable = h.depthWrite;
+        rs.depthCompareOp = h.depthFunc;
+    }
+    return rs;
 }
 
 void VulkanPipelineCache::prewarmClass(PipelineClass const& cls,
@@ -287,13 +324,31 @@ void VulkanPipelineCache::prewarmClass(PipelineClass const& cls,
     k.shaders[0] = vprogram->getVertexShader();
     k.shaders[1] = vprogram->getFragmentShader();
     k.layout = layout;
-    if (mPipelines.find(k) != mPipelines.end()) return;
+    prewarmKey(k, cls.renderPass, vprogram, priority);
+}
+
+void VulkanPipelineCache::predictClass(PipelineClass const& cls,
+        resource_ptr<VulkanProgram> const& vprogram, VkPipelineLayout layout,
+        CompilerPriorityQueue priority) {
+    PipelineKey k = cls.key;
+    k.shaders[0] = vprogram->getVertexShader();
+    k.shaders[1] = vprogram->getFragmentShader();
+    k.layout = layout;
+    k.rasterState = predictedRasterState(vprogram->hint.rasterState, cls.key.rasterState);
+    if (prewarmKey(k, cls.renderPass, vprogram, priority)) ++mPrewarmPredicted;
+}
+
+bool VulkanPipelineCache::prewarmKey(PipelineKey const& k,
+        resource_ptr<VulkanRenderPass> const& renderPass,
+        resource_ptr<VulkanProgram> const& vprogram, CompilerPriorityQueue priority) {
+    if (mPipelines.find(k) != mPipelines.end()) return false;
+    if (!mQueued.insert(PipelineHashFn{}(k)).second) return false;   // already on the pool's queue
 
     // lecodes 0042: pin the render pass for the job's lifetime. VulkanRenderPass is not a
     // thread-safe resource, so the ref stays on this (driver) thread: the job reports back through
     // mPrewarmed in every outcome (built / failed / cancelled) and gc() releases the pin then.
     uint32_t const pin = mNextPin++;
-    mPins.emplace(pin, cls.renderPass);
+    mPins.emplace(pin, renderPass);
 
     CallbackManager::Handle cmh = mCallbackManager.get();
     auto token = std::make_shared<ProgramToken>();
@@ -314,6 +369,7 @@ void VulkanPipelineCache::prewarmClass(PipelineClass const& cls,
         }
         mCallbackManager.put(cmh);
     });
+    return true;
 }
 
 void VulkanPipelineCache::bindPipeline(VulkanCommandBuffer* commands) {
@@ -358,36 +414,33 @@ void VulkanPipelineCache::asyncPrewarmCache(
     (void) stereoscopicType;
     (void) stereoscopicViewCount;
 
-    // lecodes 0028: the REAL pipelines this program will be asked for — every fresh class (the
-    // draw-time keys seen so far, minus their program) with this program's shaders and layout,
-    // built exactly as the draw would (static vertex input, real render pass) and adopted into
-    // mPipelines by gc().
     bool registered = false;
     for (auto const& p : mPrograms) {
         if (p.program.get() == vprogram.get()) { registered = true; break; }
     }
     if (!registered) mPrograms.push_back({ vprogram, layout });
-    size_t matched = 0;
-    for (auto const& c : mClasses) {
-        bool sameLayout = false;
-        for (auto l : c.layouts) if (l == layout) { sameLayout = true; break; }
-        if (!sameLayout) continue;
-        prewarmClass(c, vprogram, layout, priority);
-        ++matched;
-    }
-    if (matched == 0 && !mClasses.empty()) {
-        // A layout no class was drawn with yet — a new KIND of material (the first particle
-        // material, say). Its exact pipeline cannot be known, but the driver caches per shader
-        // binary under the real render pass: measured on NVIDIA, the same program under another
-        // cull / blend state costs microseconds once one real pipeline exists. So build it under
-        // every fresh class; the draw's own key then hits the driver, not the compiler.
+
+    // lecodes 0050: the classes this program's (family, layout) pair was drawn in — the exact
+    // pipeline; a pair never drawn gets a predicted pipeline in every class of its kind that its
+    // layout was drawn in. Neither yet: registered above, picked up by recordClass when one is.
+    auto const& hint = vprogram->hint;
+    if (pairKnown(hint.family, layout)) {
         for (auto const& c : mClasses) {
-            prewarmClass(c, vprogram, layout, priority);
-            ++matched;
+            for (auto const& p : c.pairings) {
+                if (p.family == hint.family && p.layout == layout) {
+                    prewarmClass(c, vprogram, layout, priority);
+                    break;
+                }
+            }
+        }
+    } else if (hint.predictable) {
+        for (auto const& c : mClasses) {
+            if (c.kind != hint.kind) continue;
+            for (auto const& p : c.pairings) {
+                if (p.layout == layout) { predictClass(c, vprogram, layout, priority); break; }
+            }
         }
     }
-    // matched == 0: nothing to build yet — registered above, warmed up when its layout's first
-    // class is drawn.
 }
 
 VkPipeline VulkanPipelineCache::createPipeline(
@@ -652,6 +705,8 @@ void VulkanPipelineCache::bindProgram(fvkmemory::resource_ptr<VulkanProgram> pro
     mStaticPipelineKey.shaders[0] = program->getVertexShader();
     mStaticPipelineKey.shaders[1] = program->getFragmentShader();
     mBoundProgram = program->programString;
+    mBoundFamily = program->hint.family;   // lecodes 0050
+    mBoundKind = program->hint.kind;
 
     // If this is a debug build, validate the current shader.
 #if FVK_ENABLED(FVK_DEBUG_SHADER_MODULE)
@@ -782,25 +837,22 @@ void VulkanPipelineCache::terminate() noexcept {
     }
 
     FVK_LOGI << "VulkanPipelineCache: " << mTotalMisses << " pipelines built at draw time ("
-             << mTotalMissMs << " ms; " << mTotalRebuilt << " rebuilt after eviction, " << mTotalSlow
-             << " compiled >= 2 ms), prewarmed " << mPrewarmBuilt.load() << " (adopted "
+             << mTotalMissMs << " ms; " << mTotalSlow << " compiled >= 2 ms), prewarmed "
+             << mPrewarmBuilt.load() << " (predicted " << mPrewarmPredicted << ", adopted "
              << mPrewarmAdopted << ", failed " << mPrewarmFailed.load() << "), classes recorded "
-             << mClassesRecorded << " (table " << MAX_CLASSES << ")";
+             << mClassesRecorded << " (table " << MAX_CLASSES << "), pipelines " << mPipelines.size();
 
     vkDestroyPipelineCache(mDevice, mPipelineCache, VKALLOC);
 }
 
 void VulkanPipelineCache::gc() noexcept {
-    // The timestamp associated with a given cache entry represents "time" as a count of flush
-    // events since the cache was constructed. If any cache entry was most recently used over
-    // FVK_MAX_PIPELINE_AGE flush events in the past, then we can be sure that it is no longer
-    // being used by the GPU, and is therefore safe to destroy or reclaim.
+    // mCurrentTime counts flush events since construction: the LRU order of the class table and
+    // the log's clock. lecodes 0050: nothing is evicted by age — every pipeline here is one a draw
+    // asked for or one its program's family will be asked for (the header).
     ++mCurrentTime;
 
-    // lecodes 0049: classes have no age — the table is an LRU of MAX_CLASSES (recordClass).
-
-    // lecodes 0028: adopt the pipelines the prewarm thread built against real classes — the draw
-    // finds them in mPipelines and never builds one. A duplicate (the draw got there first) is freed.
+    // lecodes 0028: adopt the pipelines the prewarm thread built — the draw finds them in mPipelines
+    // and never builds one. A duplicate (the draw got there first) is freed.
     {
         std::vector<PrewarmedPipeline> ready;
         {
@@ -809,10 +861,10 @@ void VulkanPipelineCache::gc() noexcept {
         }
         for (auto const& p : ready) {
             mPins.erase(p.pin);   // lecodes 0042: the job is done with its render pass
+            mQueued.erase(PipelineHashFn{}(p.key));
             if (p.handle == VK_NULL_HANDLE) continue;   // failed or cancelled
-            mEverBuilt.insert(PipelineHashFn{}(p.key));   // lecodes 0049
             if (mPipelines.find(p.key) == mPipelines.end()) {
-                mPipelines.emplace(p.key, PipelineCacheEntry{ p.handle, mCurrentTime, false });
+                mPipelines.emplace(p.key, PipelineCacheEntry{ p.handle, mCurrentTime });
                 ++mPrewarmAdopted;
             } else {
                 vkDestroyPipeline(mDevice, p.handle, VKALLOC);
@@ -824,36 +876,19 @@ void VulkanPipelineCache::gc() noexcept {
     // with the count and the cost (a prewarmed program's pipeline is meant to be a cache hit here).
     if (mFlushMisses > 0) {
         FVK_LOGI << "VulkanPipelineCache: flush " << mCurrentTime << " built " << mFlushMisses
-                 << " pipelines at draw time in " << mFlushMissMs << " ms (" << mFlushRebuilt
-                 << " rebuilt after eviction, " << mFlushSlow << " compiled >= 2 ms; prewarmed so far "
-                 << mPrewarmBuilt.load() << ", adopted " << mPrewarmAdopted << ", failed "
+                 << " pipelines at draw time in " << mFlushMissMs << " ms (" << mFlushSlow
+                 << " compiled >= 2 ms; prewarmed so far " << mPrewarmBuilt.load() << ", predicted "
+                 << mPrewarmPredicted << ", adopted " << mPrewarmAdopted << ", failed "
                  << mPrewarmFailed.load() << ", classes " << mClasses.size() << " of " << mClassesRecorded
                  << ", pipelines " << mPipelines.size() << ")";
         mFlushMisses = 0;
         mFlushMissMs = 0.0;
-        mFlushRebuilt = 0;
         mFlushSlow = 0;
     }
 
     // The Vulkan spec says: "When a command buffer begins recording, all state in that command
     // buffer is undefined." Therefore, we need to clear all bindings at this time.
     resetBoundPipeline();
-
-    // NOTE: Due to robin_map restrictions, we cannot use auto or range-based loops.
-
-    // Evict any pipelines that have not been used in a while.
-    // Any pipeline older than FVK_MAX_COMMAND_BUFFERS can be safely destroyed.
-    // lecodes 0049: only the prewarmed ones nobody drew — a drawn pipeline stays (VulkanConstants.h).
-   using ConstPipeIterator = decltype(mPipelines)::const_iterator;
-   for (ConstPipeIterator iter = mPipelines.begin(); iter != mPipelines.end();) {
-       const PipelineCacheEntry& cacheEntry = iter.value();
-       if (!cacheEntry.drawn && cacheEntry.lastUsed + FVK_MAX_PIPELINE_AGE < mCurrentTime) {
-           vkDestroyPipeline(mDevice, iter->second.handle, VKALLOC);
-           iter = mPipelines.erase(iter);
-       } else {
-           ++iter;
-       }
-   }
 }
 
 bool VulkanPipelineCache::PipelineEqual::operator()(const PipelineKey& k1,
