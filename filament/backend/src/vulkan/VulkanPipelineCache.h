@@ -37,6 +37,7 @@
 #include <mutex>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace filament::backend {
@@ -237,6 +238,9 @@ private:
     struct PipelineCacheEntry {
         VkPipeline handle;
         Timestamp lastUsed;
+        // lecodes 0049: bound for a draw at least once — never evicted; a prewarmed pipeline nobody
+        // drew goes after FVK_MAX_PIPELINE_AGE flushes (VulkanConstants.h).
+        bool drawn = false;
     };
 
     using PipelineMap = tsl::robin_map<PipelineKey, PipelineCacheEntry,
@@ -315,8 +319,10 @@ private:
     // matter how the driver keys its own cache. Upstream's stand-in pipeline (dynamic rendering,
     // dynamic vertex input, a made-up raster state) never produced a hit on NVIDIA: measured 87–90
     // prewarmed pipelines, the same 20 first-draw pipelines at 330–400 ms with it on or off.
-    // A class is kept while it is drawn (seen within CLASS_FRESH_FLUSHES, refreshed on hits by
-    // handle). lecodes 0042: it OWNS a ref to its render pass, and every queued job pins one too
+    // A class is kept until MAX_CLASSES newer ones push it out (lecodes 0049: no age — it used to go
+    // after 30 flushes, so a program created between two showers was never prewarmed against the
+    // structure pass; 128 slots: dirty-road records 82 classes, and kept 32 always full). lecodes 0042: it OWNS a ref
+    // to its render pass, and every queued job pins one too
     // (mPins) — the VkRenderPass in the key can no longer be evicted by VulkanFboCache under a job.
     // Upstream's stand-in prewarm pipeline (dynamic rendering, undefined formats) is gone with 0042:
     // it crashed the NVIDIA 560.94 shader compiler on the pool thread and never hit anyway.
@@ -326,8 +332,8 @@ private:
         std::vector<VkPipelineLayout> layouts;   // the pipeline layouts drawn with this class
         resource_ptr<VulkanRenderPass> renderPass;   // == key.renderPass, kept alive by the class
     };
-    static constexpr size_t MAX_CLASSES = 32;
-    static constexpr Timestamp CLASS_FRESH_FLUSHES = 30;
+    static constexpr size_t MAX_CLASSES = 128;
+    uint32_t mClassesRecorded = 0;   // lecodes 0049: every insert, for the log (> MAX_CLASSES = the table thrashes)
     std::vector<PipelineClass> mClasses;
     void recordClass(PipelineKey const& real) noexcept;
     // The render pass behind mStaticPipelineKey.renderPass (bindRenderPass) — what a new class
@@ -361,6 +367,11 @@ private:
     double mFlushMissMs = 0.0;
     uint32_t mTotalMisses = 0;
     double mTotalMissMs = 0.0;
+    // lecodes 0049: WHY a draw-time build happened — the exact key was built before and evicted
+    // (rebuilt: a VkPipelineCache hit, cheap whatever the driver's disk cache holds), and whether it
+    // cost a real compile (>= 2 ms here: the kind a first run without a driver cache pays tens of ms for).
+    std::unordered_set<size_t> mEverBuilt;   // hashes of every key built (draw time or prewarm)
+    uint32_t mFlushRebuilt = 0, mFlushSlow = 0, mTotalRebuilt = 0, mTotalSlow = 0;
 
     // Name of the bound program, used for perfetto tracing.
     utils::CString mBoundProgram;

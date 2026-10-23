@@ -24,9 +24,12 @@
 #include <utils/compiler.h>
 #include <utils/Panic.h>
 
-// If any VkRenderPass or VkFramebuffer is unused for more than TIME_BEFORE_EVICTION frames, it
-// is evicted from the cache.
-static constexpr uint32_t TIME_BEFORE_EVICTION = FVK_MAX_COMMAND_BUFFERS;
+// A VkFramebuffer unused for more than mTimeBeforeEvictionFbo frames is evicted from the cache. A
+// VkRenderPass never is (lecodes 0049): the pipeline cache keys on the render pass HANDLE and keeps
+// every pipeline that was drawn, so a pass must outlive them (a reused handle value would bind a
+// pipeline to an incompatible pass), and a pass used again after a pause (the soft particles'
+// structure pass between two showers) keeps its handle and its pipelines. A render pass holds no
+// image: the distinct keys of a session are a few dozen.
 
 using namespace bluevk;
 
@@ -404,21 +407,7 @@ void VulkanFboCache::gc() noexcept {
         }
     }
 
-    if (UTILS_UNLIKELY(mCurrentTime > TIME_BEFORE_EVICTION)) {
-        const uint32_t evictTimeRp = mCurrentTime - TIME_BEFORE_EVICTION;
-        for (RenderPassMap::iterator iter = mRenderPassCache.begin();
-                iter != mRenderPassCache.end();) {
-            const VkRenderPass handle = iter->second.handle->getVkRenderPass();
-            if (iter->second.timestamp < evictTimeRp && handle &&
-                    mRenderPassRefCount[handle] == 0) {
-                // erase(iterator) returns the iterator to the next element.
-                iter = mRenderPassCache.erase(iter);
-                mRenderPassRefCount.erase(handle);
-            } else {
-                ++iter;
-            }
-        }
-    }
+    // lecodes 0049: render passes are kept for the engine's lifetime (see the top of the file).
 
     FVK_SYSTRACE_END();
 }

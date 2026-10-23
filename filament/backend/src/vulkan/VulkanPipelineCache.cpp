@@ -184,6 +184,7 @@ VulkanPipelineCache::PipelineCacheEntry* VulkanPipelineCache::getOrCreatePipelin
             pipelineIter != mPipelines.end()) {
         auto& pipeline = pipelineIter.value();
         pipeline.lastUsed = mCurrentTime;
+        pipeline.drawn = true;   // lecodes 0049
         FILAMENT_TRACING_EVENT(FILAMENT_TRACING_CATEGORY_FILAMENT,
                 "Pipeline(Hit)", "program", mBoundProgram.c_str_safe());
         // lecodes 0028: keep the classes drawn with this render pass fresh (handle compare only).
@@ -194,17 +195,22 @@ VulkanPipelineCache::PipelineCacheEntry* VulkanPipelineCache::getOrCreatePipelin
     }
     FILAMENT_TRACING_EVENT(FILAMENT_TRACING_CATEGORY_FILAMENT,
             "Pipeline(Miss)", "program", mBoundProgram.c_str_safe());
+    // lecodes 0049: built before and evicted, or never built in this process?
+    bool const rebuilt = !mEverBuilt.insert(PipelineHashFn{}(mStaticPipelineKey)).second;
     auto const t0 = std::chrono::steady_clock::now();
     PipelineCacheEntry cacheEntry {
         .handle = createPipeline(mStaticPipelineKey),
         .lastUsed = mCurrentTime,
+        .drawn = true,
     };
     double const ms = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - t0).count();
     ++mFlushMisses; mFlushMissMs += ms;
     ++mTotalMisses; mTotalMissMs += ms;
+    if (rebuilt) { ++mFlushRebuilt; ++mTotalRebuilt; }
+    if (ms >= 2.0) { ++mFlushSlow; ++mTotalSlow; }
     recordClass(mStaticPipelineKey);
-    if (ms >= 5.0) {
+    if (ms >= 2.0) {   // lecodes 0049: the same threshold as the "compiled" count (was 5)
         // One line per draw-time build that cost real time: which program, how long, and the state
         // class that decides whether a prewarm pipeline could have been a driver-cache hit for it.
         auto const& rs = mStaticPipelineKey.rasterState;
@@ -238,6 +244,7 @@ void VulkanPipelineCache::recordClass(PipelineKey const& real) noexcept {
         // keeps up: a burst of new programs queues seconds of builds, and a job that runs after
         // its pass was evicted feeds the driver a dead handle.
         assert_invariant(mBoundRenderPass && mBoundRenderPass->getVkRenderPass() == real.renderPass);
+        ++mClassesRecorded;
         if (mClasses.size() < MAX_CLASSES) {
             mClasses.push_back({ k, mCurrentTime, {}, mBoundRenderPass });
             cls = &mClasses.back();
@@ -362,7 +369,6 @@ void VulkanPipelineCache::asyncPrewarmCache(
     if (!registered) mPrograms.push_back({ vprogram, layout });
     size_t matched = 0;
     for (auto const& c : mClasses) {
-        if (c.lastSeen + CLASS_FRESH_FLUSHES < mCurrentTime) continue;
         bool sameLayout = false;
         for (auto l : c.layouts) if (l == layout) { sameLayout = true; break; }
         if (!sameLayout) continue;
@@ -376,7 +382,6 @@ void VulkanPipelineCache::asyncPrewarmCache(
         // cull / blend state costs microseconds once one real pipeline exists. So build it under
         // every fresh class; the draw's own key then hits the driver, not the compiler.
         for (auto const& c : mClasses) {
-            if (c.lastSeen + CLASS_FRESH_FLUSHES < mCurrentTime) continue;
             prewarmClass(c, vprogram, layout, priority);
             ++matched;
         }
@@ -777,8 +782,10 @@ void VulkanPipelineCache::terminate() noexcept {
     }
 
     FVK_LOGI << "VulkanPipelineCache: " << mTotalMisses << " pipelines built at draw time ("
-             << mTotalMissMs << " ms), prewarmed " << mPrewarmBuilt.load() << " (adopted "
-             << mPrewarmAdopted << ", failed " << mPrewarmFailed.load() << ")";
+             << mTotalMissMs << " ms; " << mTotalRebuilt << " rebuilt after eviction, " << mTotalSlow
+             << " compiled >= 2 ms), prewarmed " << mPrewarmBuilt.load() << " (adopted "
+             << mPrewarmAdopted << ", failed " << mPrewarmFailed.load() << "), classes recorded "
+             << mClassesRecorded << " (table " << MAX_CLASSES << ")";
 
     vkDestroyPipelineCache(mDevice, mPipelineCache, VKALLOC);
 }
@@ -790,16 +797,7 @@ void VulkanPipelineCache::gc() noexcept {
     // being used by the GPU, and is therefore safe to destroy or reclaim.
     ++mCurrentTime;
 
-    // lecodes 0028: a class not drawn for CLASS_FRESH_FLUSHES goes — nothing prewarms against a
-    // pass the frame stopped using (0042: the class's own ref kept it alive until here).
-    for (size_t i = 0; i < mClasses.size();) {
-        if (mClasses[i].lastSeen + CLASS_FRESH_FLUSHES < mCurrentTime) {
-            mClasses[i] = mClasses.back();
-            mClasses.pop_back();
-        } else {
-            ++i;
-        }
-    }
+    // lecodes 0049: classes have no age — the table is an LRU of MAX_CLASSES (recordClass).
 
     // lecodes 0028: adopt the pipelines the prewarm thread built against real classes — the draw
     // finds them in mPipelines and never builds one. A duplicate (the draw got there first) is freed.
@@ -812,8 +810,9 @@ void VulkanPipelineCache::gc() noexcept {
         for (auto const& p : ready) {
             mPins.erase(p.pin);   // lecodes 0042: the job is done with its render pass
             if (p.handle == VK_NULL_HANDLE) continue;   // failed or cancelled
+            mEverBuilt.insert(PipelineHashFn{}(p.key));   // lecodes 0049
             if (mPipelines.find(p.key) == mPipelines.end()) {
-                mPipelines.emplace(p.key, PipelineCacheEntry{ p.handle, mCurrentTime });
+                mPipelines.emplace(p.key, PipelineCacheEntry{ p.handle, mCurrentTime, false });
                 ++mPrewarmAdopted;
             } else {
                 vkDestroyPipeline(mDevice, p.handle, VKALLOC);
@@ -825,11 +824,15 @@ void VulkanPipelineCache::gc() noexcept {
     // with the count and the cost (a prewarmed program's pipeline is meant to be a cache hit here).
     if (mFlushMisses > 0) {
         FVK_LOGI << "VulkanPipelineCache: flush " << mCurrentTime << " built " << mFlushMisses
-                 << " pipelines at draw time in " << mFlushMissMs << " ms (prewarmed so far "
+                 << " pipelines at draw time in " << mFlushMissMs << " ms (" << mFlushRebuilt
+                 << " rebuilt after eviction, " << mFlushSlow << " compiled >= 2 ms; prewarmed so far "
                  << mPrewarmBuilt.load() << ", adopted " << mPrewarmAdopted << ", failed "
-                 << mPrewarmFailed.load() << ", classes " << mClasses.size() << ")";
+                 << mPrewarmFailed.load() << ", classes " << mClasses.size() << " of " << mClassesRecorded
+                 << ", pipelines " << mPipelines.size() << ")";
         mFlushMisses = 0;
         mFlushMissMs = 0.0;
+        mFlushRebuilt = 0;
+        mFlushSlow = 0;
     }
 
     // The Vulkan spec says: "When a command buffer begins recording, all state in that command
@@ -840,10 +843,11 @@ void VulkanPipelineCache::gc() noexcept {
 
     // Evict any pipelines that have not been used in a while.
     // Any pipeline older than FVK_MAX_COMMAND_BUFFERS can be safely destroyed.
+    // lecodes 0049: only the prewarmed ones nobody drew — a drawn pipeline stays (VulkanConstants.h).
    using ConstPipeIterator = decltype(mPipelines)::const_iterator;
    for (ConstPipeIterator iter = mPipelines.begin(); iter != mPipelines.end();) {
        const PipelineCacheEntry& cacheEntry = iter.value();
-       if (cacheEntry.lastUsed + FVK_MAX_PIPELINE_AGE < mCurrentTime) {
+       if (!cacheEntry.drawn && cacheEntry.lastUsed + FVK_MAX_PIPELINE_AGE < mCurrentTime) {
            vkDestroyPipeline(mDevice, iter->second.handle, VKALLOC);
            iter = mPipelines.erase(iter);
        } else {

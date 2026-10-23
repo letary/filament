@@ -209,6 +209,15 @@ constexpr static const int FVK_MAX_COMMAND_BUFFERS = 3 * 15;
 //
 // If this number is low, VkPipeline construction will occur frequently, which can
 // be extremely slow. If this number is high, the memory footprint will be large.
+//
+// lecodes 0049: the age of a pipeline NOBODY DREW — one the prewarm thread built against a class its
+// program never meets (0028 builds every program of a layout against every class drawn with it). A
+// pipeline that was bound for a draw is never evicted (VulkanPipelineCache::gc), and neither is a
+// VkRenderPass (VulkanFboCache::gc): at 45 flushes (~0.6 s) anything off screen for a second — a
+// shower's structure pass, a rarely seen material — came back as a draw-time vkCreateGraphicsPipelines
+// under a NEW render-pass handle, and the prewarm thread rebuilt the evicted set every time a class
+// was recorded again (dirty-road: 4000+ prewarm builds a ride, a draw-time build every few seconds).
+// The drawn set is what a game uses: a few hundred pipelines.
 constexpr static const int FVK_MAX_PIPELINE_AGE = FVK_MAX_COMMAND_BUFFERS;
 
 // VulkanPipelineCache does not track which command buffers contain references to which pipelines,
