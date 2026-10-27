@@ -133,9 +133,12 @@ struct UnpackerR11G11B10 {
         using G11 = math::fp<0, 5, 6>;
         using B10 = math::fp<0, 5, 5>;
 
-        out[0] = R11::tof(R11(uint16_t((p >> 21) & 0x7FF)));
-        out[1] = G11::tof(G11(uint16_t((p >> 10) & 0x7FF)));
-        out[2] = B10::tof(B10(uint16_t(p & 0x3FF)));
+        // R11F_G11F_B10F packs R in bits 0-10, G in 11-21 and B in 22-31 (OpenGL ES 3 "packed
+        // 11-bit float", VK_FORMAT_B10G11R11_UFLOAT_PACK32 - the Vulkan name lists the components
+        // from the most significant bit down). Reading R from the top put red in blue and blue in red.
+        out[0] = R11::tof(R11(uint16_t(p & 0x7FF)));
+        out[1] = G11::tof(G11(uint16_t((p >> 11) & 0x7FF)));
+        out[2] = B10::tof(B10(uint16_t((p >> 22) & 0x3FF)));
     }
 };
 
