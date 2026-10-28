@@ -779,15 +779,19 @@ public:
     bool isStencilBufferEnabled() const noexcept;
 
     /**
-     * creator-gl patch 0017: keeps the depth ("structure") buffer alive and bound to the color
-     * pass as `sampler0_structure` even when nothing else in this View needs it (no screen-space
-     * contact shadows, no fog-as-post-process). Every surface-domain material already declares
-     * that sampler, so with this on a material can read scene depth — soft particles.
-     * Off (default): the color pass gets a 1x1 dummy and the structure pass is culled unless
-     * SSAO / contact shadows / DoF ask for it.
+     * lecodes 0017: lets blended materials read the opaque scene's depth. The color pass is
+     * split after the opaque objects (where the refraction split is, when there is one): the
+     * depth written so far is captured — resolved to one sample when multisampled — and bound
+     * to the blended half as `sampler0_structure`, the sampler every surface-domain material
+     * declares. It is the color pass's own depth: full resolution, the same pixels the color
+     * holds. Soft particles and projected decals read it.
+     * Off (default): upstream behaviour — one color pass, the sampler holds the structure
+     * (SSAO / contact-shadow) buffer or a 1x1 dummy.
+     * Cost while on: one render-pass break plus a depth resolve or copy per frame; the frame is
+     * not split when it has no blended object (nothing would read the depth).
      */
-    void setStructureSamplingEnabled(bool enabled) noexcept;
-    bool isStructureSamplingEnabled() const noexcept;
+    void setSceneDepthSamplingEnabled(bool enabled) noexcept;
+    bool isSceneDepthSamplingEnabled() const noexcept;
 
     /**
      * Sets the stereoscopic rendering options for this view.

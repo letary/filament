@@ -259,9 +259,9 @@ public:
 
     bool isStencilBufferEnabled() const noexcept { return mStencilBufferEnabled; }
 
-    // creator-gl patch 0017 (see View.h): force the structure buffer into the color pass
-    void setStructureSamplingEnabled(bool const enabled) noexcept { mStructureSamplingEnabled = enabled; }
-    bool isStructureSamplingEnabled() const noexcept { return mStructureSamplingEnabled; }
+    // lecodes 0017 (see View.h): the color pass's own depth, bound to its blended half
+    void setSceneDepthSamplingEnabled(bool const enabled) noexcept { mSceneDepthSamplingEnabled = enabled; }
+    bool isSceneDepthSamplingEnabled() const noexcept { return mSceneDepthSamplingEnabled; }
 
     void setStereoscopicOptions(StereoscopicOptions const& options) noexcept;
 
@@ -635,7 +635,7 @@ private:
     bool mScreenSpaceRefractionEnabled = true;
     bool mHasPostProcessPass = true;
     bool mStencilBufferEnabled = false;
-    bool mStructureSamplingEnabled = false;   // creator-gl patch 0017
+    bool mSceneDepthSamplingEnabled = false;   // lecodes 0017
     AmbientOcclusionOptions mAmbientOcclusionOptions{};
     ShadowType mShadowType = ShadowType::PCF;
     VsmShadowOptions mVsmShadowOptions; // FIXME: this should probably be per-light

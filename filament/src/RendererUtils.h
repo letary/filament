@@ -77,6 +77,9 @@ public:
         bool isAutoDepthResolveSupported;
         // Use post-process fog
         bool fogAsPostProcess;
+        // lecodes 0017: ColorPassInput::structure is the scene depth captured after the opaque
+        // half of a split color pass — bind it as sampler0_structure whatever else is on.
+        bool hasSceneDepth = false;
     };
 
     struct ColorPassInput {
@@ -102,13 +105,19 @@ public:
             PostProcessManager::ColorGradingConfig colorGradingConfig,
             RenderPass::Executor passExecutor) noexcept;
 
-    static ColorPassOutput refractionPass(
+    // The color pass in two halves around `split` (upstream's refraction pass, generalised by
+    // lecodes 0017): the first half draws into a target that keeps its sample buffer, then
+    // `hasRefraction` builds the SSR mip chain from its color and `hasSceneDepth` captures its
+    // depth as a single-sample texture; the second half draws the rest into the same target with
+    // that depth bound as sampler0_structure (a blended material reads the opaque scene behind it).
+    static ColorPassOutput splitColorPass(
             FrameGraph& fg, FEngine& engine, FView const& view,
             ColorPassInput colorPassInput,
             ColorPassConfig config,
             PostProcessManager::ScreenSpaceRefConfig const& ssrConfig,
             PostProcessManager::ColorGradingConfig colorGradingConfig,
-            RenderPass const& pass, RenderPass::Command const* firstRefractionCommand) noexcept;
+            RenderPass const& pass, RenderPass::Command const* split,
+            bool hasRefraction, bool hasSceneDepth) noexcept;
 
     static void readPixels(backend::DriverApi& driver,
             backend::Handle<backend::HwRenderTarget> renderTargetHandle,
@@ -116,6 +125,9 @@ public:
             backend::PixelBufferDescriptor&& buffer);
 
     static RenderPass::Command const* getFirstRefractionCommand(RenderPass const& pass) noexcept;
+
+    // lecodes 0017: the first blended command of the default channel (nullptr when there is none)
+    static RenderPass::Command const* getFirstBlendedCommand(RenderPass const& pass) noexcept;
 };
 
 } // namespace filament

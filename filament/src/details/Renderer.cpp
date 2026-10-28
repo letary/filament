@@ -758,6 +758,7 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
 
     bool hasPostProcess = view.hasPostProcessPass();
     bool hasScreenSpaceRefraction = false;
+    bool hasSplitColorPass = false;    // lecodes 0017: refraction or scene-depth sampling
     bool hasColorGrading = hasPostProcess;
     bool hasDithering = view.getDithering() == Dithering::TEMPORAL;
     bool hasFXAA = view.getAntiAliasing() == AntiAliasing::FXAA;
@@ -1123,10 +1124,7 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
             .clearFlags = getClearFlags(),
             .clearColor = clearColor,
             .clearStencil = clearStencil,
-            // creator-gl patch 0017: a View that wants scene depth in its materials (soft particles)
-            // takes the contact-shadow path — the structure pass stays alive and its texture is
-            // bound to the color pass (RendererUtils::colorPass) instead of the 1x1 dummy.
-            .hasContactShadows = view.hasContactShadows() || view.isStructureSamplingEnabled(),
+            .hasContactShadows = view.hasContactShadows(),
             // at this point we don't know if we have refraction, but that's handled later
             .hasScreenSpaceReflectionsOrRefractions = ssReflectionsOptions.enabled,
             .enabledStencilBuffer = view.isStencilBufferEnabled(),
@@ -1357,6 +1355,25 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
 
     hasScreenSpaceRefraction = firstRefractionCommand != nullptr;
 
+    // lecodes 0017: a View that samples its own depth (View::setSceneDepthSamplingEnabled) gets
+    // the color pass split after the opaque objects — at the refraction split when there is
+    // one (refractive objects come before the blended ones), else at the first blended command.
+    // The scene depth is captured there and bound to the second half as sampler0_structure.
+    // No blended object at all: nothing would read it, so no split.
+    auto* const firstBlendedCommand = [&view, firstRefractionCommand](RenderPass const& pass) {
+        RenderPass::Command const* p = nullptr;
+        if (UTILS_UNLIKELY(view.isSceneDepthSamplingEnabled() && !pass.empty()
+                && !firstRefractionCommand)) {
+            p = RendererUtils::getFirstBlendedCommand(pass);
+        }
+        return p;
+    }(pass);
+
+    const bool hasSceneDepth = view.isSceneDepthSamplingEnabled() &&
+            (hasScreenSpaceRefraction || firstBlendedCommand != nullptr);
+
+    hasSplitColorPass = hasScreenSpaceRefraction || hasSceneDepth;
+
     // this makes the viewport relative to xvp
     // FIXME: we should use 'vp' when rendering directly into the swapchain, but that's hard to
     //        know at this point. This will usually be the case when post-process is disabled.
@@ -1364,7 +1381,7 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
     // if MSAA is enabled, we end-up rendering in an intermediate buffer. This is the only case where
     // "!hasPostProcess" doesn't guarantee rendering into the swapchain.
     const bool useIntermediateBuffer = hasPostProcess || msaaOptions.enabled ||
-            ssReflectionsOptions.enabled || hasScreenSpaceRefraction ||
+            ssReflectionsOptions.enabled || hasSplitColorPass ||
             (isRenderingMultiview && engine.debug.stereo.
             combine_multiview_images);
 
@@ -1383,16 +1400,17 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
             },
             colorBufferDesc, config, colorGradingConfigForColor, pass.getExecutor());
 
-    if (UTILS_UNLIKELY(hasScreenSpaceRefraction)) {
-        // This cancels the colorPass() call above if refraction is active.
-        // The color pass + refraction + color-grading as subpass if needed
-        colorPassOutput = RendererUtils::refractionPass(fg, mEngine, view, {
+    if (UTILS_UNLIKELY(hasSplitColorPass)) {
+        // This cancels the colorPass() call above if refraction or scene-depth sampling is
+        // active. The color pass in two halves + color-grading as subpass if needed
+        colorPassOutput = RendererUtils::splitColorPass(fg, mEngine, view, {
                         .shadows = blackboard.get<FrameGraphTexture>("shadows"),
                         .ssao = blackboard.get<FrameGraphTexture>("ssao"),
                         .ssr = ssrConfig.ssr,
                 .structure = structure
             }, config, ssrConfig, colorGradingConfigForColor,
-             pass, firstRefractionCommand);
+             pass, firstRefractionCommand ? firstRefractionCommand : firstBlendedCommand,
+             hasScreenSpaceRefraction, hasSceneDepth);
     }
 
     if (colorGradingConfig.customResolve) {
@@ -1612,7 +1630,7 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
             (inputIsColorPass &&
                     (msaaSampleCount > 1 ||
                     colorGradingConfig.asSubpass ||
-                    hasScreenSpaceRefraction ||
+                    hasSplitColorPass ||
                     ssReflectionsOptions.enabled))) {
             input = ppm.blit(fg, blendModeTranslucent, input, xvp, {
                             .width = vp.width, .height = vp.height,
