@@ -349,6 +349,15 @@ public:
         });
     }
 
+    // lecodes 0055: exchange the storage (arrays, size, capacity) of two containers of this type in O(1),
+    // for a caller that has built a permuted copy of one in the other. Both must allocate from the same
+    // allocator (the default heap one is stateless): each frees what the other allocated.
+    void swapStorage(StructureOfArraysBase& other) noexcept {
+        std::swap(mCapacity, other.mCapacity);
+        std::swap(mSize, other.mSize);
+        std::swap(mArrays, other.mArrays);
+    }
+
     // remove and destroy the last element of each array
     void pop_back() noexcept {
         if (mSize) {

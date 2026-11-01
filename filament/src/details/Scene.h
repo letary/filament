@@ -210,6 +210,7 @@ public:
 
     struct SceneCacheData {
         RenderableSoa renderableData;
+        RenderableSoa renderableDataScratch;   // lecodes 0055: the visibility-ordered copy, exchanged with the above
         LightSoa lightData;
         // Directional lights in addition to the dominant one (which is stored at index 0 of
         // lightData). These are evaluated without shadows, so we only need their direction

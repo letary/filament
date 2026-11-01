@@ -714,6 +714,21 @@ CameraInfo FView::computeCameraInfo(FEngine const& engine) const noexcept {
     return { *camera, mat4{ rotation } * mat4::translation(translation) };
 }
 
+// lecodes 0055: every column but UBO of src, in `order`, into dst (both sized n)
+template<size_t... Is>
+static void gatherRenderables(FScene::RenderableSoa& dst, FScene::RenderableSoa const& src,
+        uint32_t const* order, size_t const n, std::index_sequence<Is...>) noexcept {
+    ([&] {
+        if constexpr (Is != FScene::UBO) {
+            auto* const d = dst.template data<Is>();
+            auto const* const s = src.template data<Is>();
+            for (size_t i = 0; i < n; i++) {
+                d[i] = s[order[i]];
+            }
+        }
+    }(), ...);
+}
+
 void FView::prepare(FEngine& engine, DriverApi& driver, LinearAllocatorArena& arena,
         filament::Viewport const viewport, CameraInfo cameraInfo,
         float4 const& userTime, bool const needsAlphaChannel) noexcept {
@@ -892,38 +907,74 @@ void FView::prepare(FEngine& engine, DriverApi& driver, LinearAllocatorArena& ar
         computeVisibilityMasks(getVisibleLayers(), layers, visibility, cullingMask.begin(),
                 renderableData.size());
 
-        auto const beginRenderables = renderableData.begin();
+        // lecodes 0055: the four std::partition passes above swapped whole SoA rows (~470 bytes, the
+        // UBO column included) for every misplaced element: 1.9 ms a frame on a 31k-renderable scene.
+        // The same order - visible only, visible + sun caster, sun caster only, potential punctual
+        // caster only, the rest - comes from a counting sort of the visibility class into an index
+        // list, then ONE gather of every column but UBO (prepareVisibleRenderables rewrites it for the
+        // merged range) into the cache's scratch SoA, whose storage is then exchanged with the live one.
+        size_t const n = renderableData.size();
+        auto const* const visibleMask = renderableData.data<FScene::VISIBLE_MASK>();
+        uint8_t* const classOf = arena.alloc<uint8_t>(n, CACHELINE_SIZE);
+        uint32_t* const order = arena.alloc<uint32_t>(n, CACHELINE_SIZE);
+        uint32_t counts[5] = { 0, 0, 0, 0, 0 };
+        for (size_t i = 0; i < n; i++) {
+            auto const m = visibleMask[i];
+            auto const dir = m & (VISIBLE_RENDERABLE | VISIBLE_DIR_SHADOW_RENDERABLE);
+            uint8_t c;
+            if (dir == VISIBLE_RENDERABLE) {
+                c = 0;
+            } else if (dir == (VISIBLE_RENDERABLE | VISIBLE_DIR_SHADOW_RENDERABLE)) {
+                c = 1;
+            } else if (dir == VISIBLE_DIR_SHADOW_RENDERABLE) {
+                c = 2;
+            } else if ((m & VISIBLE_DYN_SHADOW_RENDERABLE) == VISIBLE_DYN_SHADOW_RENDERABLE) {
+                c = 3;
+            } else {
+                c = 4;
+            }
+            classOf[i] = c;
+            counts[c]++;
+        }
+        uint32_t starts[5];
+        starts[0] = 0;
+        for (int c = 1; c < 5; c++) {
+            starts[c] = starts[c - 1] + counts[c - 1];
+        }
+        uint32_t fill[5] = { starts[0], starts[1], starts[2], starts[3], starts[4] };
+        for (size_t i = 0; i < n; i++) {
+            order[fill[classOf[i]]++] = uint32_t(i);
+        }
 
-        auto beginDirCasters = partition(beginRenderables, renderableData.end(),
-                VISIBLE_RENDERABLE | VISIBLE_DIR_SHADOW_RENDERABLE,
-                VISIBLE_RENDERABLE);
+        FScene::RenderableSoa& scratch = mSceneCache->renderableDataScratch;
+        if (scratch.size() != n) {
+            scratch.clear();
+            if (scratch.capacity() < n) {
+                scratch.setCapacity(renderableData.capacity());
+            }
+            scratch.resize(n);
+        }
+        gatherRenderables(scratch, renderableData, order, n,
+                std::make_index_sequence<FScene::RenderableSoa::getArrayCount()>{});
+        renderableData.swapStorage(scratch);
 
-        auto const beginDirCastersOnly = partition(beginDirCasters, renderableData.end(),
-                VISIBLE_RENDERABLE | VISIBLE_DIR_SHADOW_RENDERABLE,
-                VISIBLE_RENDERABLE | VISIBLE_DIR_SHADOW_RENDERABLE);
-
-        auto const endDirCastersOnly = partition(beginDirCastersOnly, renderableData.end(),
-                VISIBLE_RENDERABLE | VISIBLE_DIR_SHADOW_RENDERABLE,
-                VISIBLE_DIR_SHADOW_RENDERABLE);
-
-        auto const endPotentialSpotCastersOnly = partition(endDirCastersOnly, renderableData.end(),
-                VISIBLE_DYN_SHADOW_RENDERABLE,
-                VISIBLE_DYN_SHADOW_RENDERABLE);
+        uint32_t const beginDirCasters = starts[1];
+        uint32_t const beginDirCastersOnly = starts[2];
+        uint32_t const endDirCastersOnly = starts[3];
+        uint32_t const endPotentialSpotCastersOnly = starts[4];
 
         engine.debug.renderer.cpu_prepare_part_us += phaseUs(tPhase, phase_clock::now());
         // convert to indices
-        mVisibleRenderables = { 0, uint32_t(beginDirCastersOnly - beginRenderables) };
+        mVisibleRenderables = { 0, beginDirCastersOnly };
         mVisibleRenderableCount = int32_t(mVisibleRenderables.size());
 
-        mVisibleDirectionalShadowCasters = {
-                uint32_t(beginDirCasters - beginRenderables),
-                uint32_t(endDirCastersOnly - beginRenderables)};
+        mVisibleDirectionalShadowCasters = { beginDirCasters, endDirCastersOnly };
 
-        merged = { 0, uint32_t(endPotentialSpotCastersOnly - beginRenderables) };
+        merged = { 0, endPotentialSpotCastersOnly };
         if (!needsShadowMap() || !mShadowMapManager->hasSpotShadows()) {
             // we know we don't have spot shadows, we can reduce the range to not even include
             // the potential spot casters
-            merged = { 0, uint32_t(endDirCastersOnly - beginRenderables) };
+            merged = { 0, endDirCastersOnly };
         }
 
         mSpotLightShadowCasters = merged;
