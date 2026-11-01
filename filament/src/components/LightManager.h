@@ -78,6 +78,8 @@ public:
         return mManager.getEntityBitset();
     }
 
+    uint32_t getStructuralGeneration() const noexcept { return mManager.getStructuralGeneration(); }   // lecodes 0054
+
     void create(const Builder& builder, utils::Entity entity);
 
     void destroyComponents(utils::Entity const* entities, size_t count) noexcept;

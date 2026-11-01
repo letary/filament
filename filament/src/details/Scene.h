@@ -29,6 +29,7 @@
 #include <private/filament/EngineEnums.h>
 
 #include <filament/Scene.h>
+#include <filament/TransformManager.h>
 
 #include <utils/Entity.h>
 #include <utils/PagedArenaBitset.h>
@@ -256,6 +257,15 @@ private:
     void unregisterView(FView* view) noexcept;
     std::vector<FView*> mRegisteredViews;
     EntitySet mEntities;
+
+    // lecodes 0054: prepare()'s instance lists, kept while nothing structural changed (see FScene::prepare)
+    uint32_t mEntitiesVersion = 1;
+    struct InstanceCache {
+        uint32_t entitiesVersion = 0, rcmGeneration = 0, lcmGeneration = 0, tcmGeneration = 0;
+        std::vector<std::pair<utils::Entity, std::pair<RenderableManager::Instance, TransformManager::Instance>>> renderables;
+        std::vector<std::pair<utils::Entity, std::pair<LightManager::Instance, TransformManager::Instance>>> lights;
+        std::vector<std::pair<utils::Entity, std::pair<LightManager::Instance, TransformManager::Instance>>> directionals;
+    } mInstanceCache;
 };
 
 FILAMENT_DOWNCAST(Scene)

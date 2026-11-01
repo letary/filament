@@ -133,6 +133,11 @@ public:
         return mEntities;
     }
 
+    // lecodes 0054: bumped whenever an Instance may have changed hands - a component added, removed or
+    // compacted (the last one swapped into the hole, through gc too) - so a caller that keeps the results
+    // of getInstance() across frames (FScene::prepare) can tell when they are stale.
+    uint32_t getStructuralGeneration() const noexcept { return mStructuralGeneration; }
+
     /**
      * @brief Returns true if this component manager supports deferred/amortized physical array compactions.
      */
@@ -236,6 +241,7 @@ protected:
 
     tsl::robin_map<Entity, Instance, Entity::Hasher> mInstanceMap;
     PagedArenaBitset mPendingDestruction;
+    uint32_t mStructuralGeneration = 1;   // lecodes 0054
 
     /*
      * mEbrEntitiesLock protects mEntities during global EBR timeline GCs.

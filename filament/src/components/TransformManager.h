@@ -76,6 +76,8 @@ public:
         return mManager.getEntityBitset();
     }
 
+    uint32_t getStructuralGeneration() const noexcept { return mManager.getStructuralGeneration(); }   // lecodes 0054
+
     void setAccurateTranslationsEnabled(bool enable) noexcept;
 
     bool isAccurateTranslationsEnabled() const noexcept {

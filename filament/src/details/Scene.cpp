@@ -128,25 +128,57 @@ void FScene::prepare(JobSystem& js,
      * First compute the exact number of renderables and lights in the scene.
      * Also collect the directional lights.
      */
-    entities.forEachSetBit([&](uint32_t const id) {
-        Entity const e = Entity::import(int32_t(id));
-        if (UTILS_LIKELY(em.isAlive(e))) {
-            auto ti = tcm.getInstance(e);
-            auto li = lcm.getInstance(e);
-            auto ri = rcm.getInstance(e);
-            if (li) {
-                // we handle the directional lights here because it'd prevent multithreading below
-                if (UTILS_UNLIKELY(lcm.isDirectionalLight(li))) {
-                    directionalInstances.emplace_back(li, ti);
-                } else {
-                    lightInstances.emplace_back(li, ti);
+    // lecodes 0054: this walk resolves three instance maps per entity (31k entities = 1.1 ms a frame on a
+    // scene-file level) and its result changes only when the scene's entity set changes or a manager adds,
+    // removes or compacts a component (an Instance changes hands). It is kept across frames, keyed on
+    // those four counters; a dead entity whose components are not collected yet is skipped on replay
+    // exactly as the walk skips it. The directional lights' order (by intensity) is recomputed below.
+    auto& instanceCache = mInstanceCache;
+    bool const cacheFresh = instanceCache.entitiesVersion == mEntitiesVersion
+            && instanceCache.rcmGeneration == rcm.getStructuralGeneration()
+            && instanceCache.lcmGeneration == lcm.getStructuralGeneration()
+            && instanceCache.tcmGeneration == tcm.getStructuralGeneration();
+    if (UTILS_LIKELY(cacheFresh)) {
+        for (auto const& entry : instanceCache.renderables) {
+            if (UTILS_LIKELY(em.isAlive(entry.first))) renderableInstances.push_back(entry.second);
+        }
+        for (auto const& entry : instanceCache.lights) {
+            if (UTILS_LIKELY(em.isAlive(entry.first))) lightInstances.push_back(entry.second);
+        }
+        for (auto const& entry : instanceCache.directionals) {
+            if (UTILS_LIKELY(em.isAlive(entry.first))) directionalInstances.push_back(entry.second);
+        }
+    } else {
+        instanceCache.renderables.clear();
+        instanceCache.lights.clear();
+        instanceCache.directionals.clear();
+        entities.forEachSetBit([&](uint32_t const id) {
+            Entity const e = Entity::import(int32_t(id));
+            if (UTILS_LIKELY(em.isAlive(e))) {
+                auto ti = tcm.getInstance(e);
+                auto li = lcm.getInstance(e);
+                auto ri = rcm.getInstance(e);
+                if (li) {
+                    // we handle the directional lights here because it'd prevent multithreading below
+                    if (UTILS_UNLIKELY(lcm.isDirectionalLight(li))) {
+                        directionalInstances.emplace_back(li, ti);
+                        instanceCache.directionals.emplace_back(e, std::make_pair(li, ti));
+                    } else {
+                        lightInstances.emplace_back(li, ti);
+                        instanceCache.lights.emplace_back(e, std::make_pair(li, ti));
+                    }
+                }
+                if (ri) {
+                    renderableInstances.emplace_back(ri, ti);
+                    instanceCache.renderables.emplace_back(e, std::make_pair(ri, ti));
                 }
             }
-            if (ri) {
-                renderableInstances.emplace_back(ri, ti);
-            }
-        }
-    });
+        });
+        instanceCache.entitiesVersion = mEntitiesVersion;
+        instanceCache.rcmGeneration = rcm.getStructuralGeneration();
+        instanceCache.lcmGeneration = lcm.getStructuralGeneration();
+        instanceCache.tcmGeneration = tcm.getStructuralGeneration();
+    }
 
     // Sort the directional lights by decreasing intensity. The most intense one is the
     // dominant directional light (stored at index 0 of the LightSoa); it is the only one
@@ -602,6 +634,7 @@ inline void FScene::computeLightRanges(
 UTILS_NOINLINE
 void FScene::addEntity(Entity const entity) {
     mEntities.add(entity.getId());
+    mEntitiesVersion++;   // lecodes 0054
 }
 
 UTILS_NOINLINE
@@ -614,6 +647,7 @@ void FScene::addEntities(const Entity* entities, size_t const count) {
 UTILS_NOINLINE
 void FScene::remove(Entity const entity) {
     mEntities.remove(entity.getId());
+    mEntitiesVersion++;   // lecodes 0054
 }
 
 UTILS_NOINLINE
@@ -626,6 +660,7 @@ void FScene::removeEntities(const Entity* entities, size_t const count) {
 UTILS_NOINLINE
 void FScene::removeAllEntities() noexcept {
     mEntities.clear();
+    mEntitiesVersion++;   // lecodes 0054
 }
 
 UTILS_NOINLINE

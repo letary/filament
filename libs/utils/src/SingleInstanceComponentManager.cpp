@@ -192,6 +192,7 @@ SingleInstanceComponentManagerBase::addComponentImpl(Entity const e, void* conte
         if (!hasComponent(e)) {
             ci = allocator(context, e);
             mInstanceMap[e] = ci;
+            mStructuralGeneration++;   // lecodes 0054
             {
                 LockGuard<Mutex> lock(mEbrEntitiesLock);
                 mEntities.add(e.getId());
@@ -224,6 +225,7 @@ void SingleInstanceComponentManagerBase::removeComponentsImpl(Entity const* enti
             }
 
             map.erase(pos);
+            mStructuralGeneration++;   // lecodes 0054
 
             // We only need to lock mEbrEntitiesLock when writing (mutating) mEntities because the
             // global timeline thread (EntityManager) can read it concurrently. Since component
