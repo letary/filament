@@ -694,6 +694,7 @@ void FEngine::shutdown() {
     cleanupResourceList(std::move(mRenderTargets));
     cleanupResourceList(std::move(mMaterials));
     cleanupResourceList(std::move(mInstanceBuffers));
+    mDirtyMaterialInstances.clear();   // lecodes 0053
     for (auto& item : mMaterialInstances) {
         cleanupResourceList(std::move(item.second));
     }
@@ -778,21 +779,40 @@ void FEngine::prepare(DriverApi& driver) {
 
     UboManager* uboManager = mUboManager;
     size_t const capacity = getMinCommandBufferSize();
-    for (auto& materialInstanceList: mMaterialInstances) {
-        materialInstanceList.second.forEach(
-                [this, &driver, uboManager, capacity](FMaterialInstance const* item) {
-                    // post-process materials instances must be commited explicitly because their
-                    // parameters are typically not set at this point in time.
-                    if (item->getMaterial()->getMaterialDomain() == MaterialDomain::SURFACE) {
-                        // If the remaining space is less than half the capacity, we flush right
-                        // away to allow some headroom for commands that might come later.
-                        if (UTILS_UNLIKELY(driver.getCircularBuffer().getUsed() > capacity / 2)) {
-                            flush();
-                        }
-                        item->commit(driver, uboManager);
-                    }
-                });
+    auto const commitOne = [this, &driver, uboManager, capacity](FMaterialInstance const* item) {
+        // post-process materials instances must be commited explicitly because their
+        // parameters are typically not set at this point in time.
+        if (item->getMaterial()->getMaterialDomain() == MaterialDomain::SURFACE) {
+            // If the remaining space is less than half the capacity, we flush right
+            // away to allow some headroom for commands that might come later.
+            if (UTILS_UNLIKELY(driver.getCircularBuffer().getUsed() > capacity / 2)) {
+                flush();
+            }
+            item->commit(driver, uboManager);
+        }
+    };
+    // lecodes 0053: only the instances with uncommitted state are committed (a scene-file level holds tens
+    // of thousands of instances, and walking them all cost ~4 ms a frame). A texture whose sampling handle
+    // moved (a new backend texture, a lod range that needs a new view, an external placeholder) is referenced
+    // by instances that are not dirty themselves: FTexture bumps an epoch, and on such a frame every instance
+    // is committed as before. A commit never marks an instance dirty, so the list is stable while walked;
+    // a commit that creates a texture view bumps the epoch for the NEXT frame.
+    uint32_t const textureEpoch = FTexture::getHandleEpoch();
+    bool const commitAll = textureEpoch != mTextureHandleEpochSeen;
+    mTextureHandleEpochSeen = textureEpoch;
+    if (UTILS_UNLIKELY(commitAll)) {
+        for (auto& materialInstanceList: mMaterialInstances) {
+            materialInstanceList.second.forEach(commitOne);
+        }
+    } else {
+        for (FMaterialInstance* mi : mDirtyMaterialInstances) {
+            commitOne(mi);
+        }
     }
+    for (FMaterialInstance* mi : mDirtyMaterialInstances) {
+        mi->dirtySlot() = FMaterialInstance::NO_DIRTY_SLOT;
+    }
+    mDirtyMaterialInstances.clear();
 
     if (useUboBatching) {
         assert_invariant(mUboManager != nullptr);
@@ -1101,8 +1121,26 @@ FMaterialInstance* FEngine::createMaterialInstance(const FMaterial* material,
     if (UTILS_LIKELY(p)) {
         auto const pos = mMaterialInstances.emplace(material, "MaterialInstance");
         pos.first->second.insert(p);
+        markMaterialInstanceDirty(p);   // lecodes 0053: a new instance commits on the next prepare()
     }
     return p;
+}
+
+// lecodes 0053
+void FEngine::markMaterialInstanceDirty(FMaterialInstance* mi) noexcept {
+    if (mi->dirtySlot() != FMaterialInstance::NO_DIRTY_SLOT) return;
+    mi->dirtySlot() = uint32_t(mDirtyMaterialInstances.size());
+    mDirtyMaterialInstances.push_back(mi);
+}
+
+void FEngine::unmarkMaterialInstanceDirty(FMaterialInstance* mi) noexcept {
+    uint32_t const slot = mi->dirtySlot();
+    if (slot == FMaterialInstance::NO_DIRTY_SLOT) return;
+    FMaterialInstance* const last = mDirtyMaterialInstances.back();
+    mDirtyMaterialInstances[slot] = last;
+    last->dirtySlot() = slot;
+    mDirtyMaterialInstances.pop_back();
+    mi->dirtySlot() = FMaterialInstance::NO_DIRTY_SLOT;
 }
 
 FMaterialInstance* FEngine::createMaterialInstance(const FMaterial* material,
@@ -1111,6 +1149,7 @@ FMaterialInstance* FEngine::createMaterialInstance(const FMaterial* material,
     if (UTILS_LIKELY(p)) {
         auto pos = mMaterialInstances.emplace(material, "MaterialInstance");
         pos.first->second.insert(p);
+        markMaterialInstanceDirty(p);   // lecodes 0053: a new instance commits on the next prepare()
     }
     return p;
 }
@@ -1440,6 +1479,7 @@ bool FEngine::destroy(const FMaterialInstance* p) {
     }
 
     if (p->isDefaultInstance()) return false;
+    unmarkMaterialInstanceDirty(const_cast<FMaterialInstance*>(p));   // lecodes 0053
     auto const pos = mMaterialInstances.find(p->getMaterial());
     assert_invariant(pos != mMaterialInstances.cend());
     if (pos != mMaterialInstances.cend()) {

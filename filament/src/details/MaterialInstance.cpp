@@ -200,6 +200,11 @@ FMaterialInstance* FMaterialInstance::duplicate(FMaterialInstance const* other,
 
 FMaterialInstance::~FMaterialInstance() noexcept = default;
 
+// lecodes 0053
+void FMaterialInstance::markDirty() const noexcept {
+    mMaterial->getEngine().markMaterialInstanceDirty(const_cast<FMaterialInstance*>(this));
+}
+
 void FMaterialInstance::terminate(FEngine& engine) {
     FEngine::DriverApi& driver = engine.getDriverApi();
     mDescriptorSet.terminate(driver);
@@ -323,6 +328,7 @@ void FMaterialInstance::setParameter(std::string_view const name,
 
     mDescriptorSet.setSampler(mMaterial->getDescriptorSetLayout(),
         binding, texture, params);
+    markDirty();   // lecodes 0053
 }
 
 void FMaterialInstance::setParameterImpl(std::string_view const name,
@@ -387,6 +393,7 @@ void FMaterialInstance::setParameterImpl(std::string_view const name,
         mDescriptorSet.setSampler(mMaterial->getDescriptorSetLayout(),
             binding, handle, sampler.getSamplerParams());
     }
+    markDirty();   // lecodes 0053
 }
 
 void FMaterialInstance::setMaskThreshold(float const threshold) noexcept {
@@ -608,6 +615,7 @@ void FMaterialInstance::assignUboAllocation(
         mDescriptorSet.setBuffer(mMaterial->getDescriptorSetLayout(), 0, ubHandle, 0,
                 mUniforms.getSize());
     }
+    markDirty();   // lecodes 0053: the slot (and the uniforms left dirty while there was none) commit next
 }
 
 BufferAllocator::AllocationId FMaterialInstance::getAllocationId() const noexcept {

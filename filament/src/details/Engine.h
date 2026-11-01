@@ -594,6 +594,10 @@ public:
         return mMaterialInstances;
     }
 
+    // lecodes 0053: a material instance whose state changed asks to be committed at the next prepare()
+    void markMaterialInstanceDirty(FMaterialInstance* mi) noexcept;
+    void unmarkMaterialInstanceDirty(FMaterialInstance* mi) noexcept;
+
 #if defined(__EMSCRIPTEN__)
     void resetBackendState() noexcept;
 #endif
@@ -707,6 +711,11 @@ private:
 
     // FMaterialInstance are handled directly by FMaterial
     std::unordered_map<const FMaterial*, ResourceList<FMaterialInstance>> mMaterialInstances;
+    // lecodes 0053: the material instances with uncommitted state (a parameter, a texture, a UBO slot);
+    // prepare() commits these instead of every instance in the engine. FMaterialInstance::dirtySlot() is
+    // the instance's index here (NO_DIRTY_SLOT = not listed); removal swaps the last entry into the slot.
+    std::vector<FMaterialInstance*> mDirtyMaterialInstances;
+    uint32_t mTextureHandleEpochSeen = 0;   // FTexture::getHandleEpoch() at the last prepare()
 
     DFG mDFG;
 

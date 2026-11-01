@@ -53,6 +53,7 @@ void FMaterialInstance::setParameterUntypedImpl(std::string_view const name, con
     ssize_t offset = mMaterial->getUniformInterfaceBlock().getFieldOffset(name, 0);
     if (UTILS_LIKELY(offset >= 0)) {
         mUniforms.setUniformUntyped<Size>(size_t(offset), value);  // handles specialization for mat3f
+        if (mUniforms.isDirty()) markDirty();   // lecodes 0053 (setUniform skips an unchanged value)
     }
 }
 
@@ -72,6 +73,7 @@ inline void FMaterialInstance::setParameterImpl(std::string_view const name, mat
     ssize_t offset = mMaterial->getUniformInterfaceBlock().getFieldOffset(name, 0);
     if (UTILS_LIKELY(offset >= 0)) {
         mUniforms.setUniform(size_t(offset), value);
+        if (mUniforms.isDirty()) markDirty();   // lecodes 0053
     }
 }
 
@@ -84,6 +86,7 @@ void FMaterialInstance::setParameterUntypedImpl(std::string_view const name,
     ssize_t offset = mMaterial->getUniformInterfaceBlock().getFieldOffset(name, 0);
     if (UTILS_LIKELY(offset >= 0)) {
         mUniforms.setUniformArrayUntyped<Size>(size_t(offset), value, count);
+        if (mUniforms.isDirty()) markDirty();   // lecodes 0053
     }
 }
 

@@ -46,6 +46,12 @@ class FTexture : public Texture {
 public:
     FTexture(FEngine& engine, const Builder& builder);
 
+    // lecodes 0053: bumped whenever a texture's sampling handle may have moved (a backend texture replaced,
+    // a lod range that needs a new view, an external placeholder); FEngine::prepare commits every material
+    // instance on a frame where it moved, and only the dirty ones otherwise.
+    static uint32_t getHandleEpoch() noexcept { return sHandleEpoch.load(std::memory_order_relaxed); }
+    static void bumpHandleEpoch() noexcept { sHandleEpoch.fetch_add(1, std::memory_order_relaxed); }
+
     // frees driver resources, object becomes invalid
     void terminate(FEngine& engine);
 
@@ -187,6 +193,7 @@ private:
 
     backend::Handle<backend::HwTexture> mHandle;
     mutable backend::Handle<backend::HwTexture> mHandleForSampling;
+    static std::atomic<uint32_t> sHandleEpoch;   // lecodes 0053
     backend::DriverApi* mDriver = nullptr; // this is only needed for getHwHandleForSampling()
     LodRange mLodRange{};
     mutable LodRange mActiveLodRange{};

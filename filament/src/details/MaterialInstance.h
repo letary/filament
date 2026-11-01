@@ -84,6 +84,12 @@ public:
 
     UniformBuffer const& getUniformBuffer() const noexcept { return mUniforms; }
 
+    // lecodes 0053: the instance's slot in FEngine::mDirtyMaterialInstances (NO_DIRTY_SLOT = committed);
+    // markDirty() lists it for the next prepare(). Every write of a uniform, a texture or the UBO slot calls it.
+    static constexpr uint32_t NO_DIRTY_SLOT = ~0u;
+    uint32_t& dirtySlot() const noexcept { return mDirtyIndex; }
+    void markDirty() const noexcept;
+
     void compile(backend::CompilerPriorityQueue priority, UserVariantFilterMask variantSpec,
             backend::CallbackHandler* handler,
             utils::Invocable<void(MaterialInstance*)>&& callback) noexcept;
@@ -334,6 +340,7 @@ private:
     tsl::robin_map<backend::descriptor_binding_t, TextureParameter> mTextureParameters;
     mutable DescriptorSet mDescriptorSet;
     UniformBuffer mUniforms;
+    mutable uint32_t mDirtyIndex = NO_DIRTY_SLOT;   // lecodes 0053
 
     // HACK: Mutable so that prepareProgram() can update specialization constants.
     mutable LocalProgramCache mPrograms;

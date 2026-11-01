@@ -735,13 +735,17 @@ void FTexture::updateLodRange(uint8_t const baseLevel, uint8_t const levelCount)
             // We defer the creation of the texture view to getHwHandleForSampling() because it
             // is a common case that by then, the view won't be needed. Creating the first view on a
             // texture has a backend cost.
+            bumpHandleEpoch();   // lecodes 0053: every instance re-reads the sampling handle next prepare()
         }
     }
 }
 
+std::atomic<uint32_t> FTexture::sHandleEpoch{ 1 };   // lecodes 0053
+
 void FTexture::setHandles(Handle<HwTexture> handle) noexcept {
     assert_invariant(!mHandle || mHandleForSampling);
     if (mHandle) {
+        bumpHandleEpoch();   // lecodes 0053: a REPLACED texture is what sampling instances hold; a new one has none
         mDriver->destroyTexture(mHandle);
     }
     if (mHandleForSampling != mHandle) {
@@ -786,7 +790,9 @@ Handle<HwTexture> FTexture::getHwHandleForSampling() const {
                "creation was canceled";
 
     if (UTILS_UNLIKELY(mExternal && !mHandleForSampling)) {
-        return setHandleForSampling(createPlaceholderTexture(*mDriver));
+        auto const placeholder = setHandleForSampling(createPlaceholderTexture(*mDriver));
+        bumpHandleEpoch();   // lecodes 0053
+        return placeholder;
     }
     auto const& range = mLodRange;
     auto& activeRange = mActiveLodRange;
