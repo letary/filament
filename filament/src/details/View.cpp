@@ -723,6 +723,13 @@ void FView::prepare(FEngine& engine, DriverApi& driver, LinearAllocatorArena& ar
 
     JobSystem& js = engine.getJobSystem();
 
+    // lecodes 0052: the sections' CPU time, into engine.debug.renderer (see Renderer::renderJob)
+    using phase_clock = std::chrono::steady_clock;
+    auto const phaseUs = [](phase_clock::time_point a, phase_clock::time_point b) {
+        return float(std::chrono::duration<double, std::micro>(b - a).count());
+    };
+    phase_clock::time_point tPhase = phase_clock::now();
+
     /*
      * Prepare the scene -- this is where we gather all the objects added to the scene,
      * and in particular their world-space AABB.
@@ -754,6 +761,7 @@ void FView::prepare(FEngine& engine, DriverApi& driver, LinearAllocatorArena& ar
     scene->prepare(js, arena,
             cameraInfo.worldTransform,
             hasVSM() || hasPCSS(), *mSceneCache);
+    engine.debug.renderer.cpu_prepare_scene_us += phaseUs(tPhase, phase_clock::now());
 
     /*
      * Light culling: runs in parallel with Renderable culling (below)
@@ -797,7 +805,9 @@ void FView::prepare(FEngine& engine, DriverApi& driver, LinearAllocatorArena& ar
          * (this will set the VISIBLE_RENDERABLE bit)
          */
 
+        tPhase = phase_clock::now();
         prepareVisibleRenderables(js, cullingFrustum, renderableData);
+        engine.debug.renderer.cpu_prepare_cull_us += phaseUs(tPhase, phase_clock::now());
 
 
         /*
@@ -847,7 +857,9 @@ void FView::prepare(FEngine& engine, DriverApi& driver, LinearAllocatorArena& ar
 
         setFroxelizerSync(froxelizeLightsJob);
 
+        tPhase = phase_clock::now();
         prepareShadowing(engine, driver, renderableData, lightData, cameraInfo);
+        engine.debug.renderer.cpu_prepare_shadow_us += phaseUs(tPhase, phase_clock::now());
 
         /*
          * Partition the SoA so that renderables are partitioned w.r.t their visibility into the
@@ -872,6 +884,7 @@ void FView::prepare(FEngine& engine, DriverApi& driver, LinearAllocatorArena& ar
         //       and rely on checking visibility in the loops
 
         FILAMENT_TRACING_NAME_BEGIN(FILAMENT_TRACING_CATEGORY_FILAMENT, "Partitioning");
+        tPhase = phase_clock::now();
 
         // calculate the sorting key for all elements, based on their visibility
         uint8_t const* layers = renderableData.data<FScene::LAYERS>();
@@ -897,6 +910,7 @@ void FView::prepare(FEngine& engine, DriverApi& driver, LinearAllocatorArena& ar
                 VISIBLE_DYN_SHADOW_RENDERABLE,
                 VISIBLE_DYN_SHADOW_RENDERABLE);
 
+        engine.debug.renderer.cpu_prepare_part_us += phaseUs(tPhase, phase_clock::now());
         // convert to indices
         mVisibleRenderables = { 0, uint32_t(beginDirCastersOnly - beginRenderables) };
         mVisibleRenderableCount = int32_t(mVisibleRenderables.size());
@@ -919,11 +933,13 @@ void FView::prepare(FEngine& engine, DriverApi& driver, LinearAllocatorArena& ar
         // TODO: when any spotlight is used, `merged` ends-up being the whole list. However,
         //       some of the items will end-up not being visible by any light. Can we do better?
         //       e.g. could we deffer some of the prepareVisibleRenderables() to later?
+        tPhase = phase_clock::now();
         scene->prepareVisibleRenderables(merged, *mSceneCache);
 
         // update those UBOs
         if (!merged.empty()) {
             updateUBOs(driver, renderableData, merged);
+            engine.debug.renderer.cpu_prepare_ubo_us += phaseUs(tPhase, phase_clock::now());
 
             mCommonRenderableDescriptorSet.setBuffer(
                 engine.getPerRenderableDescriptorSetLayout(),

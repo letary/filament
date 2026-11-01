@@ -798,6 +798,24 @@ public:
             bool doFrameCapture = false;
             bool disable_buffer_padding = false;
             bool disable_subpasses = false;
+            // lecodes 0052: the CPU time of the render job's phases, microseconds, summed over the frame's
+            // views and reset in Renderer::beginFrame; a host's profiler reads them through the debug
+            // registry (d.renderer.cpu_*_us)
+            float cpu_prepare_us = 0.0f;
+            float cpu_shadows_us = 0.0f;
+            float cpu_structure_us = 0.0f;
+            float cpu_color_us = 0.0f;
+            float cpu_execute_us = 0.0f;
+            // the view's prepare, split (View::prepare): the scene gather, the renderable culling, the shadow
+            // maps' setup (cascades, caster culling), the per-renderable UBO fill
+            float cpu_prepare_scene_us = 0.0f;
+            float cpu_prepare_cull_us = 0.0f;
+            float cpu_prepare_shadow_us = 0.0f;
+            float cpu_prepare_ubo_us = 0.0f;
+            float cpu_prepare_part_us = 0.0f;   // the visibility partition of the renderable SoA
+            float cpu_scene_loop_us = 0.0f;     // FScene::prepare's serial instance loop (of cpu_prepare_scene_us)
+            float cpu_spare0_us = 0.0f;         // free slots for the next measurement (no header change)
+            float cpu_spare1_us = 0.0f;
         } renderer;
         struct {
             bool debug_froxel_visualization = false;

@@ -331,6 +331,12 @@ void FRenderer::skipFrame(uint64_t const vsyncSteadyClockTimeNano) {
 
     mFrameId++;
     FILAMENT_TRACING_FRAME_ID(FILAMENT_TRACING_CATEGORY_FILAMENT, mFrameId);
+    {   // lecodes 0052: the CPU phase timers restart with the frame
+        auto& d = mEngine.debug.renderer;
+        d.cpu_prepare_us = d.cpu_shadows_us = d.cpu_structure_us = d.cpu_color_us = d.cpu_execute_us = 0.0f;
+        d.cpu_prepare_scene_us = d.cpu_prepare_cull_us = d.cpu_prepare_shadow_us = d.cpu_prepare_ubo_us = 0.0f;
+        d.cpu_prepare_part_us = d.cpu_scene_loop_us = d.cpu_spare0_us = d.cpu_spare1_us = 0.0f;
+    }
 
     FEngine& engine = mEngine;
     FEngine::DriverApi& driver = engine.getDriverApi();
@@ -420,6 +426,12 @@ bool FRenderer::beginFrame(FSwapChain* swapChain, uint64_t vsyncSteadyClockTimeN
 
     mFrameId++;
     FILAMENT_TRACING_FRAME_ID(FILAMENT_TRACING_CATEGORY_FILAMENT, mFrameId);
+    {   // lecodes 0052: the CPU phase timers restart with the frame
+        auto& d = mEngine.debug.renderer;
+        d.cpu_prepare_us = d.cpu_shadows_us = d.cpu_structure_us = d.cpu_color_us = d.cpu_execute_us = 0.0f;
+        d.cpu_prepare_scene_us = d.cpu_prepare_cull_us = d.cpu_prepare_shadow_us = d.cpu_prepare_ubo_us = 0.0f;
+        d.cpu_prepare_part_us = d.cpu_scene_loop_us = d.cpu_spare0_us = d.cpu_spare1_us = 0.0f;
+    }
 
     // get the timestamp as soon as possible
     using namespace std::chrono;
@@ -756,6 +768,13 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
     // DEBUG: driver commands must all happen from the same thread. Enforce that on debug builds.
     driver.debugThreading();
 
+    // lecodes 0052: CPU time per phase of this job, into engine.debug.renderer (summed over the frame's views)
+    using phase_clock = std::chrono::steady_clock;
+    auto const phaseUs = [](phase_clock::time_point a, phase_clock::time_point b) {
+        return float(std::chrono::duration<double, std::micro>(b - a).count());
+    };
+    phase_clock::time_point tPhase{};
+
     bool hasPostProcess = view.hasPostProcessPass();
     bool hasScreenSpaceRefraction = false;
     bool hasSplitColorPass = false;    // lecodes 0017: refraction or scene-depth sampling
@@ -977,6 +996,7 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
      */
 
     auto [bias, derivativeScale] = prepareUpscaler(scale, taaOptions, dsrOptions);
+    tPhase = phase_clock::now();
     view.prepare(engine, driver, arena, svp, taaCameraInfo, getShaderUserTime(), needsAlphaChannel);
     view.prepareLodBias(bias, derivativeScale);
     view.prepareSSAO(aoOptions);
@@ -987,6 +1007,7 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
     // to wait for the color pass to execute to set the viewport. For now, I wasn't able to
     // get into such a case though.
     view.prepareViewport(svp, xvp);
+    engine.debug.renderer.cpu_prepare_us += phaseUs(tPhase, phase_clock::now());
     view.commitUniforms(driver);
 
     /*
@@ -1048,6 +1069,7 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
      */
 
     if (view.needsShadowMap()) {
+        tPhase = phase_clock::now();
         Variant shadowVariant(Variant::DEPTH_VARIANT);
         shadowVariant.setDepthMoments(view.hasVSM() || view.hasPCSS());
 
@@ -1056,6 +1078,7 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
                     .renderFlags(renderFlags)
                     .variant(shadowVariant));
         blackboard["shadows"] = shadows;
+        engine.debug.renderer.cpu_shadows_us += phaseUs(tPhase, phase_clock::now());
     }
 
     // When we don't have a custom RenderTarget, customRenderTarget below is nullptr and is
@@ -1152,12 +1175,14 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
     // Also, picking is handled here if transparent picking is disabled.
 
     // TODO: the scaling should depends on all passes that need the structure pass
+    tPhase = phase_clock::now();
     const auto [structure, picking_] = ppm.structure(fg,
             passBuilder, renderFlags, svp.width, svp.height, {
             .scale = aoOptions.resolution,
             .picking = view.hasPicking() && !view.isTransparentPickingEnabled()
     });
     auto picking = picking_;
+    engine.debug.renderer.cpu_structure_us += phaseUs(tPhase, phase_clock::now());
 
     // --------------------------------------------------------------------------------------------
     // Picking pass -- automatically culled if not used
@@ -1392,6 +1417,7 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
     const_cast<RenderPass&>(pass).finalize(engine, driver);
 
     // the color pass itself + color-grading as subpass if needed
+    tPhase = phase_clock::now();
     auto colorPassOutput = RendererUtils::colorPass(fg, "Color Pass", mEngine, view, {
                 .shadows = blackboard.get<FrameGraphTexture>("shadows"),
                 .ssao = blackboard.get<FrameGraphTexture>("ssao"),
@@ -1460,6 +1486,7 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
     // if the depth is not used below or if the depth is not MS (e.g. it could have been
     // auto-resolved).
     // In practice, this is used on Vulkan and older Metal devices.
+    engine.debug.renderer.cpu_color_us += phaseUs(tPhase, phase_clock::now());
     auto depth = ppm.resolve(fg, "Resolved Depth Buffer", colorPassOutput.depth, { .levels = 1 });
 
     // Debug: CSM visualisation
@@ -1655,6 +1682,7 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
     fg.forwardResource(fgViewRenderTarget, input);
     fg.present(fgViewRenderTarget);
 
+    tPhase = phase_clock::now();
     fg.compile();
 
     //utils::io::sstream graphviz;
@@ -1662,6 +1690,7 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
     //DLOG(INFO) << graphviz.c_str();
 
     fg.execute(driver);
+    engine.debug.renderer.cpu_execute_us += phaseUs(tPhase, phase_clock::now());
 
     // save the current history entry and destroy the oldest entry
     view.commitFrameHistory(engine);

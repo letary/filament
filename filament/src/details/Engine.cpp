@@ -557,6 +557,21 @@ void FEngine::init() {
 
     mPostProcessManager.init();
 
+    // lecodes 0052: the render job's CPU phases (Renderer::renderJob), for a host's profiler
+    mDebugRegistry.registerProperty("d.renderer.cpu_prepare_us", &debug.renderer.cpu_prepare_us);
+    mDebugRegistry.registerProperty("d.renderer.cpu_shadows_us", &debug.renderer.cpu_shadows_us);
+    mDebugRegistry.registerProperty("d.renderer.cpu_structure_us", &debug.renderer.cpu_structure_us);
+    mDebugRegistry.registerProperty("d.renderer.cpu_color_us", &debug.renderer.cpu_color_us);
+    mDebugRegistry.registerProperty("d.renderer.cpu_execute_us", &debug.renderer.cpu_execute_us);
+    mDebugRegistry.registerProperty("d.renderer.cpu_prepare_scene_us", &debug.renderer.cpu_prepare_scene_us);
+    mDebugRegistry.registerProperty("d.renderer.cpu_prepare_cull_us", &debug.renderer.cpu_prepare_cull_us);
+    mDebugRegistry.registerProperty("d.renderer.cpu_prepare_shadow_us", &debug.renderer.cpu_prepare_shadow_us);
+    mDebugRegistry.registerProperty("d.renderer.cpu_prepare_ubo_us", &debug.renderer.cpu_prepare_ubo_us);
+    mDebugRegistry.registerProperty("d.renderer.cpu_prepare_part_us", &debug.renderer.cpu_prepare_part_us);
+    mDebugRegistry.registerProperty("d.renderer.cpu_scene_loop_us", &debug.renderer.cpu_scene_loop_us);
+    mDebugRegistry.registerProperty("d.renderer.cpu_spare0_us", &debug.renderer.cpu_spare0_us);
+    mDebugRegistry.registerProperty("d.renderer.cpu_spare1_us", &debug.renderer.cpu_spare1_us);
+
     mDebugRegistry.registerProperty("d.shadowmap.debug_directional_shadowmap",
             &debug.shadowmap.debug_directional_shadowmap, [this] {
                 mMaterials.forEach([this](FMaterial* material) {

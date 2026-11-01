@@ -54,6 +54,7 @@
 #include <math/vec4.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -117,6 +118,7 @@ void FScene::prepare(JobSystem& js,
             LightInstanceContainer::with_capacity(entities.size(), arena) };
 
     FILAMENT_TRACING_NAME_BEGIN(FILAMENT_TRACING_CATEGORY_FILAMENT, "InstanceLoop");
+    auto const tLoop = std::chrono::steady_clock::now();   // lecodes 0052
 
     // directional lights are handled separately from the punctual lights
     LightInstanceContainer directionalInstances{
@@ -165,6 +167,8 @@ void FScene::prepare(JobSystem& js,
                     directionalInstances[0];
 
     FILAMENT_TRACING_NAME_END(FILAMENT_TRACING_CATEGORY_FILAMENT);
+    engine.debug.renderer.cpu_scene_loop_us +=   // lecodes 0052
+            float(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - tLoop).count());
 
     /*
      * Evaluate the capacity needed for the renderable and light SoAs
