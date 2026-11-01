@@ -1367,7 +1367,9 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
     }
 
     // create the pass, which generates all its commands (this is a heavy operation)
+    tPhase = phase_clock::now();   // lecodes 0056: timed into cpu_spare0_us (the command list of every visible primitive)
     RenderPass const pass{ passBuilder.build(engine, driver) };
+    engine.debug.renderer.cpu_spare0_us += phaseUs(tPhase, phase_clock::now());
 
     // now that we have the commands we can figure out if we have refraction commands
     auto* const firstRefractionCommand = [&view](RenderPass const& pass) {
@@ -1682,13 +1684,15 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
     fg.forwardResource(fgViewRenderTarget, input);
     fg.present(fgViewRenderTarget);
 
-    tPhase = phase_clock::now();
+    tPhase = phase_clock::now();   // lecodes 0056: the compile into cpu_spare1_us, the execute alone in cpu_execute_us
     fg.compile();
+    engine.debug.renderer.cpu_spare1_us += phaseUs(tPhase, phase_clock::now());
 
     //utils::io::sstream graphviz;
     //fg.export_graphviz(graphviz, view.getName());
     //DLOG(INFO) << graphviz.c_str();
 
+    tPhase = phase_clock::now();
     fg.execute(driver);
     engine.debug.renderer.cpu_execute_us += phaseUs(tPhase, phase_clock::now());
 
