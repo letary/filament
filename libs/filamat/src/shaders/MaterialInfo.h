@@ -51,6 +51,7 @@ struct UTILS_PUBLIC MaterialInfo {
     bool multiBounceAOSet;
     bool specularAOSet;
     bool hasCustomSurfaceShading;
+    bool hasAlphaToCoverage;          // lecodes 0057: the raster state's alphaToCoverage, the runtime's default resolved
     bool useLegacyMorphing;
     bool instanced;
     bool vertexDomainDeviceJittered;

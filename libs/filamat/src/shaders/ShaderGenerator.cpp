@@ -178,6 +178,10 @@ void ShaderGenerator::generateSurfaceMaterialVariantDefines(io::sstream& out,
                 break;
             case BlendingMode::MASKED:
                 CodeGenerator::generateDefine(out, "BLEND_MODE_MASKED");
+                // lecodes 0057: applyAlphaMask leaves the ramp under the threshold to alpha-to-coverage
+                if (material.hasAlphaToCoverage) {
+                    CodeGenerator::generateDefine(out, "MATERIAL_HAS_ALPHA_TO_COVERAGE");
+                }
                 break;
             case BlendingMode::FADE:
                 // Fade is a special case of transparent

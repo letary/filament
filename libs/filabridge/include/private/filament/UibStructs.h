@@ -164,7 +164,7 @@ struct PerViewUib { // NOLINT(cppcoreguidelines-pro-type-member-init)
     // bit 0-3: cascade count
     // bit 8-11: cascade has visible shadows
     int32_t cascades;
-    float reservedLight0;
+    float alphaToCoverage;                      // lecodes 0057: 1 = the colour pass is multisampled (MSAA): a2c takes the mask's ramp
     math::float2 lightFarAttenuationParams;     // a, a/far (a=1/pct-of-far)
 
     // --------------------------------------------------------------------------------------------

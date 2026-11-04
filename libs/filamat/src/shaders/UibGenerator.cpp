@@ -176,7 +176,7 @@ BufferInterfaceBlock const& UibGenerator::getPerViewUib() noexcept  {
 
             { "cascadeSplits",             0, Type::FLOAT4, Precision::HIGH },
             { "cascades",                  0, Type::INT                     },
-            { "reservedLight0",            0, Type::FLOAT                   },
+            { "alphaToCoverage",           0, Type::FLOAT                   },   // lecodes 0057
             { "lightFarAttenuationParams", 0, Type::FLOAT2, Precision::HIGH },
 
             // ------------------------------------------------------------------------------------

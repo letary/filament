@@ -744,6 +744,8 @@ void MaterialBuilder::prepareToBuild(MaterialInfo& info) noexcept {
     info.reflectionMode = mReflectionMode;
     info.quality = mShaderQuality;
     info.hasCustomSurfaceShading = mCustomSurfaceShading;
+    // lecodes 0057: as MaterialDefinition resolves it at load - set explicitly, else on for a MASKED material
+    info.hasAlphaToCoverage = mAlphaToCoverageSet ? mAlphaToCoverage : mBlendingMode == BlendingMode::MASKED;
     info.useLegacyMorphing = mUseLegacyMorphing;
     info.instanced = mInstanced;
     info.vertexDomainDeviceJittered = mVertexDomainDeviceJittered;

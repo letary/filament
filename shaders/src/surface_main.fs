@@ -29,7 +29,16 @@ void applyAlphaMask(inout vec4 baseColor) {
     // Use derivatives to sharpen alpha tested edges, combined with alpha to
     // coverage to smooth the result
     baseColor.a = (baseColor.a - getMaskThreshold()) / max(fwidth(baseColor.a), 1e-3) + 0.5;
-    if (baseColor.a <= getMaskThreshold()) {
+    // lecodes 0057: on a multisampled colour pass a material with alpha-to-coverage keeps the WHOLE remapped ramp - the
+    // one pixel from 0 to 1 - and lets the coverage resolve it; the threshold discard below cut the lower half away, and
+    // a cutout's edge came out half a pixel wide (stepped). A single-sample pass (TAA, FXAA, none) keeps the discard.
+    float discardAt = getMaskThreshold();
+#if defined(MATERIAL_HAS_ALPHA_TO_COVERAGE) && MATERIAL_FEATURE_LEVEL > 0
+    if (frameUniforms.alphaToCoverage > 0.5) {
+        discardAt = 0.0;
+    }
+#endif
+    if (baseColor.a <= discardAt) {
         discard;
     }
 }

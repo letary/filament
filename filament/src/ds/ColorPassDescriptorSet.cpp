@@ -288,6 +288,10 @@ void ColorPassDescriptorSet::prepareBlending(bool const needsAlphaChannel) noexc
     mUniforms.edit().needsAlphaChannel = needsAlphaChannel ? 1.0f : 0.0f;
 }
 
+void ColorPassDescriptorSet::prepareAlphaToCoverage(bool const multisampled) noexcept {
+    mUniforms.edit().alphaToCoverage = multisampled ? 1.0f : 0.0f;
+}
+
 void ColorPassDescriptorSet::prepareMaterialGlobals(
         std::array<float4, 4> const& materialGlobals) noexcept {
     PerViewDescriptorSetUtils::prepareMaterialGlobals(mUniforms.edit(), materialGlobals);

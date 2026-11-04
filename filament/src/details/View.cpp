@@ -1109,6 +1109,9 @@ void FView::prepare(FEngine& engine, DriverApi& driver, LinearAllocatorArena& ar
             scene->getIndirectLight());
     colorPassDescriptorSet.prepareTemporalNoise(engine, mTemporalAntiAliasingOptions);
     colorPassDescriptorSet.prepareBlending(needsAlphaChannel);
+    // lecodes 0057: the view's MSAA as Renderer::renderJob reads it (multiview turns MSAA off there; not used here)
+    colorPassDescriptorSet.prepareAlphaToCoverage(
+            mMultiSampleAntiAliasingOptions.enabled && mMultiSampleAntiAliasingOptions.sampleCount > 1);
     colorPassDescriptorSet.prepareMaterialGlobals(mMaterialGlobals);
 }
 

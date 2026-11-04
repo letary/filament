@@ -104,6 +104,8 @@ public:
     void prepareStructure(TextureHandle structure) noexcept;
     void prepareSSAO(TextureHandle ssao, AmbientOcclusionOptions const& options) noexcept;
     void prepareBlending(bool needsAlphaChannel) noexcept;
+    // lecodes 0057: the colour pass is multisampled (alpha-to-coverage resolves the masked ramp)
+    void prepareAlphaToCoverage(bool multisampled) noexcept;
     void prepareMaterialGlobals(std::array<math::float4, 4> const& materialGlobals) noexcept;
 
     // screen-space reflection and/or refraction (SSR)
