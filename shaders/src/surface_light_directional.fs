@@ -79,7 +79,13 @@ void evaluateDirectionalLight(const MaterialInputs material,
         visibility *= 1.0 - ssContactShadowOcclusion;
 
         #if defined(MATERIAL_HAS_AMBIENT_OCCLUSION)
-        visibility *= computeMicroShadowing(light.NoL, material.ambientOcclusion);
+        // lecodes 0058: ambientOcclusion 0 is this engine's "IBL off" idiom (foliage, foliage-cards, foliage-impostor,
+        // grass, lightmap). This block runs in the shadow-receiver variant only, so with ao 0 the sun on every crown
+        // dropped to NoL² whenever the sun's shadow map was born and came back when it died (a baked level: only the
+        // movers cast, the map comes and goes with the camera). No micro-shadow for ao 0; a textured ao is unchanged.
+        if (material.ambientOcclusion > 0.0) {
+            visibility *= computeMicroShadowing(light.NoL, material.ambientOcclusion);
+        }
         #endif
 #if defined(MATERIAL_CAN_SKIP_LIGHTING)
         if (visibility <= 0.0) {
@@ -145,7 +151,10 @@ void evaluateExtraDirectionalLights(const MaterialInputs material,
 #endif
                     float visibility = 1.0;
 #if defined(VARIANT_HAS_SHADOWING) && defined(MATERIAL_HAS_AMBIENT_OCCLUSION)
-                    visibility = computeMicroShadowing(light.NoL, material.ambientOcclusion);
+                    // lecodes 0058: as the sun above - no micro-shadow for ao 0 (the IBL-off idiom)
+                    if (material.ambientOcclusion > 0.0) {
+                        visibility = computeMicroShadowing(light.NoL, material.ambientOcclusion);
+                    }
 #endif
 #if defined(MATERIAL_HAS_CUSTOM_SURFACE_SHADING)
                     color.rgb += customSurfaceShading(material, pixel, light, visibility);
