@@ -763,6 +763,16 @@ public:
     void clearAmbientCube(Instance instance) noexcept;
 
     /**
+     * lecodes 0061: LOD CROSS-FADE. `fade` = 0: drawn as usual. Else a screen-door share for a level-of-detail switch:
+     * fade in (0, 1] = the renderable coming IN keeps the pixels whose per-frame dither noise is under `fade`; fade in
+     * [-1, 0) = the one going OUT keeps the complement (noise >= -fade), so the two levels together cover every pixel
+     * exactly once and a temporal pass resolves the pattern into a blend. A material reads it with
+     * `getObjectLodFade()` (surface_instancing.glsl) and discards accordingly; one that never reads it draws in full.
+     * Cheap to call every frame. Feature level 1 and up.
+     */
+    void setLodFade(Instance instance, float fade) noexcept;
+
+    /**
      * Returns whether a light channel is enabled on a specified renderable.
      * @param instance Instance of the component obtained from getInstance().
      * @param channel  Light channel to query

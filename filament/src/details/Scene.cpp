@@ -462,6 +462,7 @@ void FScene::prepareVisibleRenderables(Range<uint32_t> visibleRenderables, Scene
     // lecodes 0029: the baked ambient cubes (RenderableManager::setAmbientCube) into the block's reserved vectors
     FRenderableManager const& rcmAmbient = mEngine.getRenderableManager();
     bool const anyAmbient = rcmAmbient.hasAmbientCubes();
+    bool const anyFade = rcmAmbient.hasLodFades();   // lecodes 0061
     for (uint32_t const i : visibleRenderables) {
         PerRenderableData& uboData = sceneData.elementAt<UBO>(i);
 
@@ -519,6 +520,11 @@ void FScene::prepareVisibleRenderables(Range<uint32_t> visibleRenderables, Scene
         } else {
             uboData.reserved[6] = { 0.0f, 0.0f, 0.0f, 0.0f };
         }
+        // lecodes 0061: reserved[7] = (the LOD cross-fade share, 7886 = the signature, 0, 0); zeros when none - the slot
+        // is written every frame, a renderable's index in this array changes with the scene
+        float const lodFade = anyFade ? rcmAmbient.getLodFade(entity) : 0.0f;
+        if (lodFade != 0.0f) uboData.reserved[7] = { lodFade, 7886.0f, 0.0f, 0.0f };
+        else uboData.reserved[7] = { 0.0f, 0.0f, 0.0f, 0.0f };
 
         cache.hasContactShadows = cache.hasContactShadows || visibility.screenSpaceContactShadows;
     }

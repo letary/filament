@@ -799,6 +799,7 @@ void FRenderableManager::destroyComponents(Entity const* entities, size_t const 
         if (Instance const ci = getInstance(e)) {
             destroyComponent(ci, driver);
             mAmbientCubes.erase(e);   // lecodes 0029
+            mLodFades.erase(e);       // lecodes 0061
             manager.removeComponent(e);
         }
     }
@@ -1152,6 +1153,14 @@ void FRenderableManager::setAmbientCube(Instance const ci, math::float4 const* c
 
 void FRenderableManager::clearAmbientCube(Instance const ci) noexcept {
     if (ci) mAmbientCubes.erase(mManager.getEntity(ci));
+}
+
+// lecodes 0061
+void FRenderableManager::setLodFade(Instance const ci, float const fade) noexcept {
+    if (!ci) return;
+    Entity const e = mManager.getEntity(ci);
+    if (fade == 0.0f) mLodFades.erase(e);
+    else mLodFades[e] = fade;
 }
 
 void FRenderableManager::setLightChannel(Instance const ci, unsigned int const channel, bool const enable) noexcept {

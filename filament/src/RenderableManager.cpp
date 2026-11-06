@@ -232,6 +232,10 @@ void RenderableManager::clearAmbientCube(Instance const instance) noexcept {
     downcast(this)->clearAmbientCube(instance);
 }
 
+void RenderableManager::setLodFade(Instance const instance, float const fade) noexcept {
+    downcast(this)->setLodFade(instance, fade);
+}
+
 void RenderableManager::setLightChannel(Instance const instance, unsigned int const channel, bool const enable) noexcept {
     downcast(this)->setLightChannel(instance, channel, enable);
 }

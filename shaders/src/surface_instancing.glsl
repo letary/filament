@@ -11,6 +11,8 @@ highp float object_uniforms_userData;   // TODO: We need a better solution, this
 #if MATERIAL_FEATURE_LEVEL > 0
 // lecodes 0029: the renderable's baked ambient cube (RenderableManager::setAmbientCube); [6] = (sky visibility, signature x 2, the baked sun visibility)
 highp vec4 object_uniforms_ambientCube[7];
+// lecodes 0061: the LOD cross-fade share (RenderableManager::setLodFade; reserved[7] = (share, 7886 = the signature, 0, 0)), 0 = none
+highp float object_uniforms_lodFade;
 #endif
 
 //------------------------------------------------------------------------------
@@ -51,6 +53,7 @@ void initObjectUniforms() {
     object_uniforms_userData                    = objectUniforms.data[i].userData;
 #if MATERIAL_FEATURE_LEVEL > 0
     object_uniforms_ambientCube[6]              = objectUniforms.data[i].reserved[6];
+    object_uniforms_lodFade                     = objectUniforms.data[i].reserved[7].y == 7886.0 ? objectUniforms.data[i].reserved[7].x : 0.0;
     if (object_uniforms_ambientCube[6].yz == vec2(7885.0, -7885.0)) {   // the signature (Scene.cpp), not a flag
         object_uniforms_ambientCube[0]          = objectUniforms.data[i].reserved[0];
         object_uniforms_ambientCube[1]          = objectUniforms.data[i].reserved[1];
@@ -59,6 +62,19 @@ void initObjectUniforms() {
         object_uniforms_ambientCube[4]          = objectUniforms.data[i].reserved[4];
         object_uniforms_ambientCube[5]          = objectUniforms.data[i].reserved[5];
     }
+#endif
+}
+
+/**
+ * lecodes 0061: this renderable's LOD cross-fade share (RenderableManager::setLodFade): 0 = drawn in full; in (0, 1] the
+ * renderable is coming in and keeps the pixels whose dither noise is under it; in [-1, 0) it is going out and keeps the
+ * complement. A material that honours it discards the rest - see creator-gl's lod-fade.fs.
+ */
+highp float getObjectLodFade() {
+#if MATERIAL_FEATURE_LEVEL > 0
+    return object_uniforms_lodFade;
+#else
+    return 0.0;
 #endif
 }
 

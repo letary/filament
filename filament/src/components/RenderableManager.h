@@ -200,6 +200,13 @@ public:
         auto const it = mAmbientCubes.find(e);
         return it == mAmbientCubes.end() ? nullptr : &it->second;
     }
+    // lecodes 0061: the LOD cross-fade share per renderable (see the public header), a side table like the cubes
+    void setLodFade(Instance instance, float fade) noexcept;
+    bool hasLodFades() const noexcept { return !mLodFades.empty(); }
+    float getLodFade(utils::Entity e) const noexcept {
+        auto const it = mLodFades.find(e);
+        return it == mLodFades.end() ? 0.0f : it->second;
+    }
 
     inline bool isShadowCaster(Instance instance) const noexcept;
     inline bool isShadowReceiver(Instance instance) const noexcept;
@@ -364,6 +371,7 @@ private:
     Sim mManager;
 
     std::unordered_map<utils::Entity, AmbientCube, utils::Entity::Hasher> mAmbientCubes;   // lecodes 0029
+    std::unordered_map<utils::Entity, float, utils::Entity::Hasher> mLodFades;             // lecodes 0061
     FEngine& mEngine;
     HwRenderPrimitiveFactory mHwRenderPrimitiveFactory;
 };
