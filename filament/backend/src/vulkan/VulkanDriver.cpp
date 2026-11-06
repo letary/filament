@@ -81,6 +81,21 @@ uint64_t sFrameSignalValue = 0;                    // value published by the las
 std::atomic<uint64_t> sFrameSignalCounter{0};      // per-submission counter (VulkanCommands::submit)
 bool sFrameSignalPending = false;                  // a commit happened since the last take
 std::atomic<bool> sFrameSignalEnabled{false};
+// creator-gl patch 0059: the per-FRAME timeline. Patch 0010's timeline counts SUBMISSIONS (a frame is
+// several, the number varies), so a host wanting "frame N is done" had to ask the driver thread for the
+// value after the frame — a wait on the driver thread RECORDING it (~5 ms a frame on a 12k-renderable
+// scene; docs/plans/presenter-plan.md in the monorepo). This one counts FRAMES: every endFrame() that
+// follows a commit() (renderStandaloneView's endFrame commits nothing and counts nothing) appends a relay
+// submission on the graphics queue that waits the submission timeline at the frame's last value and
+// signals this semaphore at the frame's number — a number the host knows BEFORE the frame is recorded,
+// because it counts the same Renderer::endFrame calls itself — so a compositor sampling the frame waits
+// (semaphore, number) GPU-side right after the render call, and nobody waits for the driver thread.
+// The number runs from the driver's birth whether or not the semaphore exists, so a host that asks for
+// it mid-run stays in step. Driver thread only, except the extern "C" accessors.
+VkSemaphore sFrameTimelineSem = VK_NULL_HANDLE;
+uint64_t sFrameTimelineCount = 0;                  // frames committed so far
+bool sFrameTimelineCommitted = false;              // a commit() since the last endFrame()
+std::atomic<bool> sFrameTimelineEnabled{false};
 } // namespace
 
 uint64_t filament::backend::fvkqueue::frameSignalAcquire(uint64_t* value) noexcept {
@@ -196,6 +211,65 @@ extern "C" uint64_t filament_vk_frameSignalSubmitted() {
     return sFrameSignalCounter.load();
 }
 // ---- end creator-gl patch 0010 ------------------------------------------------------------------
+
+// ---- creator-gl patch 0059: the per-frame timeline (sFrameTimelineSem above) ---------------------
+// The semaphore as uint64 (0 = unavailable: no engine yet, or no timelineSemaphore). Created on first
+// call, which also brings patch 0010's submission timeline up (the relay waits on it); destroyed with
+// the driver. Its first signal is the next committed frame's number, whatever frames came before.
+extern "C" uint64_t filament_vk_frameTimelineSemaphore() {
+    if (filament_vk_frameSignalSemaphore() == 0) return 0;
+    std::lock_guard<std::mutex> const lock(sFrameSignalMutex);
+    if (sFrameTimelineSem == VK_NULL_HANDLE) {
+        VkSemaphoreTypeCreateInfoKHR const typeInfo = {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO_KHR,
+            .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE_KHR,
+            .initialValue = 0,
+        };
+        VkSemaphoreCreateInfo const createInfo = {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+            .pNext = &typeInfo,
+        };
+        if (vkCreateSemaphore(sFrameSignalDevice, &createInfo, nullptr, &sFrameTimelineSem) != VK_SUCCESS) {
+            sFrameTimelineSem = VK_NULL_HANDLE;
+            return 0;
+        }
+        sFrameTimelineEnabled.store(true, std::memory_order_release);
+    }
+    return (uint64_t) sFrameTimelineSem;
+}
+// Block until the frame timeline reached `value` (frame `value`'s GPU work is complete). Not a queue
+// operation: no lock. false on timeout or when unavailable.
+extern "C" bool filament_vk_waitFrameTimeline(uint64_t value, uint64_t timeoutNs) {
+    VkSemaphore sem;
+    {
+        std::lock_guard<std::mutex> const lock(sFrameSignalMutex);
+        if (!sFrameTimelineEnabled.load() || sFrameSignalDevice == VK_NULL_HANDLE) return false;
+        sem = sFrameTimelineSem;
+    }
+    VkSemaphoreWaitInfoKHR const waitInfo = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO_KHR,
+        .semaphoreCount = 1,
+        .pSemaphores = &sem,
+        .pValues = &value,
+    };
+    auto const waitFn = vkWaitSemaphoresKHR ? vkWaitSemaphoresKHR : vkWaitSemaphores;
+    if (!waitFn) return false;
+    return waitFn(sFrameSignalDevice, &waitInfo, timeoutNs) == VK_SUCCESS;
+}
+// Diagnostics: the last frame number the GPU completed.
+extern "C" uint64_t filament_vk_frameTimelineCompleted() {
+    VkSemaphore sem;
+    {
+        std::lock_guard<std::mutex> const lock(sFrameSignalMutex);
+        if (!sFrameTimelineEnabled.load() || sFrameSignalDevice == VK_NULL_HANDLE) return 0;
+        sem = sFrameTimelineSem;
+    }
+    auto const fn = vkGetSemaphoreCounterValueKHR ? vkGetSemaphoreCounterValueKHR : vkGetSemaphoreCounterValue;
+    uint64_t value = 0;
+    if (!fn || fn(sFrameSignalDevice, sem, &value) != VK_SUCCESS) return 0;
+    return value;
+}
+// ---- end creator-gl patch 0059 ------------------------------------------------------------------
 
 #if defined(__clang__)
 // Vulkan functions often immediately dereference pointers, so it's fine to pass in a pointer
@@ -544,6 +618,12 @@ void VulkanDriver::terminate() {
             vkDestroySemaphore(mPlatform->getDevice(), sFrameSignalSem, nullptr);
             sFrameSignalSem = VK_NULL_HANDLE;
         }
+        if (sFrameTimelineSem != VK_NULL_HANDLE) {   // creator-gl patch 0059
+            vkDestroySemaphore(mPlatform->getDevice(), sFrameTimelineSem, nullptr);
+            sFrameTimelineSem = VK_NULL_HANDLE;
+        }
+        sFrameTimelineEnabled.store(false);
+        sFrameTimelineCommitted = false;
         sFrameSignalEnabled.store(false);
         sFrameSignalPending = false;
         sFrameSignalDevice = VK_NULL_HANDLE;
@@ -695,6 +775,45 @@ void VulkanDriver::endFrame(uint32_t frameId) {
             sFrameSignalPending = true;
         }
         sFrameSignalCv.notify_all();
+    }
+    // creator-gl patch 0059: a committed frame is submitted — relay it onto the per-frame timeline: a
+    // submission that WAITS patch 0010's timeline at this frame's last value and signals the frame's
+    // number (a signal-only submission would complete at once, see above). The number counts whether
+    // the semaphore exists yet or not, so the host's own count stays in step with it.
+    if (sFrameTimelineCommitted) {
+        sFrameTimelineCommitted = false;
+        uint64_t const frame = ++sFrameTimelineCount;
+        if (sFrameTimelineEnabled.load(std::memory_order_acquire)) {
+            uint64_t const waitValue = sFrameSignalCounter.load();
+            VkPipelineStageFlags const waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+            VkTimelineSemaphoreSubmitInfoKHR const timelineInfo = {
+                .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO_KHR,
+                .waitSemaphoreValueCount = 1,
+                .pWaitSemaphoreValues = &waitValue,
+                .signalSemaphoreValueCount = 1,
+                .pSignalSemaphoreValues = &frame,
+            };
+            VkSubmitInfo const submitInfo = {
+                .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                .pNext = &timelineInfo,
+                .waitSemaphoreCount = 1,
+                .pWaitSemaphores = &sFrameSignalSem,
+                .pWaitDstStageMask = &waitStage,
+                .commandBufferCount = 0,
+                .signalSemaphoreCount = 1,
+                .pSignalSemaphores = &sFrameTimelineSem,
+            };
+            fvkqueue::lock();
+            VkResult const result = vkQueueSubmit(mPlatform->getGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
+            fvkqueue::unlock();
+            if (result != VK_SUCCESS) {
+                static bool sLogged = false;
+                if (!sLogged) {
+                    sLogged = true;
+                    FVK_LOGE << "frame timeline relay failed: " << (int) result;
+                }
+            }
+        }
     }
 }
 
@@ -2695,6 +2814,7 @@ void VulkanDriver::commit(Handle<HwSwapChain> sch) {
 
     // Present the backbuffer after the most recent command buffer submission has finished.
     swapChain->present(*this);
+    sFrameTimelineCommitted = true;   // creator-gl patch 0059: this frame counts (endFrame relays it)
 }
 
 void VulkanDriver::setPushConstant(backend::ShaderStage stage, uint8_t index,
