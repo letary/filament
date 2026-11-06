@@ -694,7 +694,8 @@ void FEngine::shutdown() {
     cleanupResourceList(std::move(mRenderTargets));
     cleanupResourceList(std::move(mMaterials));
     cleanupResourceList(std::move(mInstanceBuffers));
-    mDirtyMaterialInstances.clear();   // lecodes 0053
+    // lecodes 0060: no clear of mDirtyMaterialInstances here - each instance's terminate() below removes itself
+    // (a clear would leave the slots stale for those unmarks)
     for (auto& item : mMaterialInstances) {
         cleanupResourceList(std::move(item.second));
     }
@@ -1136,6 +1137,7 @@ void FEngine::markMaterialInstanceDirty(FMaterialInstance* mi) noexcept {
 void FEngine::unmarkMaterialInstanceDirty(FMaterialInstance* mi) noexcept {
     uint32_t const slot = mi->dirtySlot();
     if (slot == FMaterialInstance::NO_DIRTY_SLOT) return;
+    assert_invariant(slot < mDirtyMaterialInstances.size() && mDirtyMaterialInstances[slot] == mi);
     FMaterialInstance* const last = mDirtyMaterialInstances.back();
     mDirtyMaterialInstances[slot] = last;
     last->dirtySlot() = slot;
@@ -1479,7 +1481,7 @@ bool FEngine::destroy(const FMaterialInstance* p) {
     }
 
     if (p->isDefaultInstance()) return false;
-    unmarkMaterialInstanceDirty(const_cast<FMaterialInstance*>(p));   // lecodes 0053
+    // the dirty list: FMaterialInstance::terminate leaves it (lecodes 0060)
     auto const pos = mMaterialInstances.find(p->getMaterial());
     assert_invariant(pos != mMaterialInstances.cend());
     if (pos != mMaterialInstances.cend()) {

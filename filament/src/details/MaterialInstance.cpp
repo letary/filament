@@ -209,8 +209,12 @@ void FMaterialInstance::terminate(FEngine& engine) {
     FEngine::DriverApi& driver = engine.getDriverApi();
     mDescriptorSet.terminate(driver);
     if (mUseUboBatching) {
-        engine.getUboManager()->unmanageMaterialInstance(this);
+        engine.getUboManager()->unmanageMaterialInstance(this);   // assignUboAllocation: marks dirty again
     }
+    // lecodes 0060: a terminated instance leaves the dirty list LAST - unmanageMaterialInstance just re-listed it
+    // (assignUboAllocation marks), and the free follows this call. Every destruction path (FEngine::destroy, the
+    // shutdown sweep) terminates, so this is the one place.
+    engine.unmarkMaterialInstanceDirty(this);
 
     auto* ubHandle = std::get_if<Handle<HwBufferObject>>(&mUboData);
     if (ubHandle){
