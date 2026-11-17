@@ -53,6 +53,10 @@ public:
 
     math::mat4f const& getLocalTransform(size_t index) const;
 
+    // lecodes 0066: the first instance's local transform mirrors (det < 0). A draw has one winding, so a buffer's
+    // instances are expected to agree; FScene::prepare folds this into the renderable's reversedWindingOrder.
+    bool isMirrored() const noexcept { return mMirrored; }
+
     void prepare(
             PerRenderableData* buffer, uint32_t index, uint32_t count,
             math::mat4f const& rootTransform, PerRenderableData const& ubo);
@@ -69,6 +73,7 @@ private:
     utils::ImmutableCString mName;
     uint32_t mInstanceCount;
     uint32_t mIndex = 0;
+    bool mMirrored = false;   // lecodes 0066
 };
 
 FILAMENT_DOWNCAST(InstanceBuffer)

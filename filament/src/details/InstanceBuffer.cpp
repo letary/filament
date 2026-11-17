@@ -98,6 +98,7 @@ FInstanceBuffer::FInstanceBuffer(FEngine&, const Builder& builder)
     if (builder->mLocalTransforms) {
         memcpy(mLocalTransforms.data(), builder->mLocalTransforms,
                 sizeof(math::mat4f) * mInstanceCount);
+        mMirrored = det(mLocalTransforms[0].upperLeft()) < 0;   // lecodes 0066
     }
 }
 
@@ -114,6 +115,7 @@ void FInstanceBuffer::setLocalTransforms(
             << " instances, but trying to set " << count 
             << " transforms at offset " << offset << ".";
     memcpy(mLocalTransforms.data() + offset, localTransforms, sizeof(math::mat4f) * count);
+    if (offset == 0 && count > 0) mMirrored = det(mLocalTransforms[0].upperLeft()) < 0;   // lecodes 0066
 }
 
 // lecodes 0065
@@ -143,10 +145,13 @@ void FInstanceBuffer::prepare(
 
     for (size_t i = 0, c = count; i < c; i++) {
         math::mat4f const model = rootTransform * mLocalTransforms[i];
-        math::mat3f const m = math::mat3f::getTransformForNormals(model.upperLeft());
+        math::mat3f m = math::prescaleForNormals(math::mat3f::getTransformForNormals(model.upperLeft()));
+        // lecodes 0066: a mirrored instance shades the other side of the polygon, as FScene::prepareVisibleRenderables
+        // does for a mirrored renderable (this line replaces the matrix it negated)
+        if (det(model.upperLeft()) < 0) m = -m;
         buffer[index + i] = ubo;
         buffer[index + i].worldFromModelMatrix = model;
-        buffer[index + i].worldFromModelNormalMatrix = math::prescaleForNormals(m);
+        buffer[index + i].worldFromModelNormalMatrix = m;
         if (!mReservedSlots.empty()) {   // lecodes 0065: the instance's own slots, no cube signature
             for (size_t k = 0; k < 6; k++) buffer[index + i].reserved[k] = mReservedSlots[i * 6 + k];
             buffer[index + i].reserved[6] = { 0.0f, 0.0f, 0.0f, 0.0f };

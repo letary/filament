@@ -257,7 +257,10 @@ void FScene::prepare(JobSystem& js,
             // this is where we go from double to float for our transforms
             const mat4f shaderWorldTransform{
                     worldTransform * tcm.getWorldTransformAccurate(ti) };
-            const bool reversedWindingOrder = det(shaderWorldTransform.upperLeft()) < 0;
+            // lecodes 0066: an instanced renderable's triangles are placed by root * local - the buffer's mirror counts
+            FInstanceBuffer const* const instanceBuffer = rcm.getInstancesInfo(ri).buffer;
+            const bool reversedWindingOrder = (det(shaderWorldTransform.upperLeft()) < 0)
+                    != (instanceBuffer != nullptr && instanceBuffer->isMirrored());
 
             // compute the world AABB so we can perform culling
             const Box worldAABB = rigidTransform(rcm.getAABB(ri), shaderWorldTransform);
