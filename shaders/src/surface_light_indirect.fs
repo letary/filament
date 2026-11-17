@@ -857,7 +857,14 @@ void evaluateIBL(const MaterialInputs material, const PixelParams pixel, inout v
             // the sky's share of the cube along r: its SH irradiance (Lambert baked in) through the visibility
             highp vec3 skyR = lecodesSkyIrradiance(rc) * (frameUniforms.iblLuminance * skyVis);
             highp vec3 room = max(cubeR - max(skyR, vec3(0.0)), vec3(0.0));
-            Fr += E * room * pixel.energyCompensation * specularSingleBounceAO;
+            // lecodes 0068: the cube's reflection takes the material's specular occlusion like the IBL's above. With
+            // multi-bounce AO singleBounceAO() is 1 and the occlusion is multiBounceSpecularAO's - which ran before
+            // this term was added, so a material that turns its indirect light OFF (ambientOcclusion = 0: lightmap.mat)
+            // still reflected the cube: the baked wall of a window model, whose renderable carries a cube for its
+            // unbaked glass, lit up at grazing angles in a dark room (Chernobyl, 2026-11-17).
+            vec3 cubeFr = E * room * pixel.energyCompensation * specularSingleBounceAO;
+            multiBounceSpecularAO(specularAO, pixel.f0, cubeFr);
+            Fr += cubeFr;
         }
     } else {
         Fr *= frameUniforms.iblLuminance;
