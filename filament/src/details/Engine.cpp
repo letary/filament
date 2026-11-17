@@ -569,8 +569,8 @@ void FEngine::init() {
     mDebugRegistry.registerProperty("d.renderer.cpu_prepare_ubo_us", &debug.renderer.cpu_prepare_ubo_us);
     mDebugRegistry.registerProperty("d.renderer.cpu_prepare_part_us", &debug.renderer.cpu_prepare_part_us);
     mDebugRegistry.registerProperty("d.renderer.cpu_scene_loop_us", &debug.renderer.cpu_scene_loop_us);
-    mDebugRegistry.registerProperty("d.renderer.cpu_spare0_us", &debug.renderer.cpu_spare0_us);
-    mDebugRegistry.registerProperty("d.renderer.cpu_spare1_us", &debug.renderer.cpu_spare1_us);
+    mDebugRegistry.registerProperty("d.renderer.cpu_build_us", &debug.renderer.cpu_build_us);
+    mDebugRegistry.registerProperty("d.renderer.cpu_compile_us", &debug.renderer.cpu_compile_us);
 
     mDebugRegistry.registerProperty("d.shadowmap.debug_directional_shadowmap",
             &debug.shadowmap.debug_directional_shadowmap, [this] {

@@ -67,6 +67,19 @@ void initObjectUniforms() {
 }
 
 /**
+ * lecodes 0064: this renderable's (or, in an instanced draw, this INSTANCE's) reserved slot `slot`, 0..5 - the data of
+ * RenderableManager::setReservedSlot / InstanceBuffer::setReservedSlots. A renderable carrying a baked ambient cube has
+ * its sides there instead: a material reads slots only where its host wrote them.
+ */
+highp vec4 getObjectSlot(int slot) {
+#if MATERIAL_FEATURE_LEVEL > 0
+    return object_uniforms_ambientCube[slot];
+#else
+    return vec4(0.0);
+#endif
+}
+
+/**
  * lecodes 0061: this renderable's LOD cross-fade share (RenderableManager::setLodFade): 0 = drawn in full; in (0, 1] the
  * renderable is coming in and keeps the pixels whose dither noise is under it; in [-1, 0) it is going out and keeps the
  * complement. A material that honours it discards the rest - see creator-gl's lod-fade.fs.

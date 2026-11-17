@@ -192,16 +192,18 @@ public:
     // lecodes 0029: the baked ambient cube of a renderable (see the public header). A side table by entity rather than
     // a field of the component SoA and of the scene's: few renderables carry one, and the upstream structures stay as
     // they are for the next rebase. Written between frames by the client, read by FScene::prepareVisibleRenderables.
-    // raw (lecodes 0064, setReservedSlot): side[] are six free per-renderable vectors of the caller's, not a cube -
-    // written to reserved[0..5] WITHOUT the cube's signature in reserved[6]
-    struct AmbientCube { math::float4 side[6]; float skyVisibility; float sunVisibility; bool raw = false; };
+    // A renderable's six reserved vectors (PerRenderableData::reserved[0..5]), one entry per renderable that has any.
+    // Two users, one at a time: the baked AMBIENT CUBE (lecodes 0029, `cube`: v = its six sides, and reserved[6]
+    // carries the signature + the two visibilities the lighting reads), or the caller's own SLOTS (lecodes 0064,
+    // setReservedSlot: v is free data a material reads through getObjectSlot(), reserved[6] stays zero).
+    struct RenderableSlots { math::float4 v[6]; float skyVisibility = 1.0f; float sunVisibility = 1.0f; bool cube = false; };
     void setReservedSlot(Instance instance, size_t index, math::float4 const& value) noexcept;
     void setAmbientCube(Instance instance, math::float4 const* cube, float skyVisibility, float sunVisibility) noexcept;
     void clearAmbientCube(Instance instance) noexcept;
-    bool hasAmbientCubes() const noexcept { return !mAmbientCubes.empty(); }
-    AmbientCube const* getAmbientCube(utils::Entity e) const noexcept {
-        auto const it = mAmbientCubes.find(e);
-        return it == mAmbientCubes.end() ? nullptr : &it->second;
+    bool hasRenderableSlots() const noexcept { return !mRenderableSlots.empty(); }
+    RenderableSlots const* getRenderableSlots(utils::Entity e) const noexcept {
+        auto const it = mRenderableSlots.find(e);
+        return it == mRenderableSlots.end() ? nullptr : &it->second;
     }
     // lecodes 0061: the LOD cross-fade share per renderable (see the public header), a side table like the cubes
     void setLodFade(Instance instance, float fade) noexcept;
@@ -373,7 +375,7 @@ private:
 
     Sim mManager;
 
-    std::unordered_map<utils::Entity, AmbientCube, utils::Entity::Hasher> mAmbientCubes;   // lecodes 0029
+    std::unordered_map<utils::Entity, RenderableSlots, utils::Entity::Hasher> mRenderableSlots;   // lecodes 0029 / 0064
     std::unordered_map<utils::Entity, float, utils::Entity::Hasher> mLodFades;             // lecodes 0061
     FEngine& mEngine;
     HwRenderPrimitiveFactory mHwRenderPrimitiveFactory;

@@ -460,9 +460,9 @@ void FScene::prepareVisibleRenderables(Range<uint32_t> visibleRenderables, Scene
     RenderableSoa& sceneData = cache.renderableData;
     
     cache.hasContactShadows = false;
-    // lecodes 0029: the baked ambient cubes (RenderableManager::setAmbientCube) into the block's reserved vectors
+    // lecodes 0029 / 0064: the renderables' reserved vectors (a baked ambient cube, or the caller's slots) into the block
     FRenderableManager const& rcmAmbient = mEngine.getRenderableManager();
-    bool const anyAmbient = rcmAmbient.hasAmbientCubes();
+    bool const anyAmbient = rcmAmbient.hasRenderableSlots();
     bool const anyFade = rcmAmbient.hasLodFades();   // lecodes 0061
     // lecodes 0063: the loop on the JobSystem. Each index writes its own UBO slot from columns nothing writes meanwhile
     // (the ambient-cube and fade lookups only read), so the chunks are independent; contact shadows are OR-ed at the end.
@@ -521,12 +521,12 @@ void FScene::prepareVisibleRenderables(Range<uint32_t> visibleRenderables, Scene
         // lecodes 0029: reserved[0..5] = the cube's sides, reserved[6] = (sky visibility, 7885, -7885, sun visibility) when the cube is
         // on - a signature and not a flag: materials compiled with 0029's shaders may meet an engine without it (a host not
         // rebuilt yet) that never writes these vectors, and whatever lies there must not read as a cube
-        FRenderableManager::AmbientCube const* const ambient = anyAmbient ? rcmAmbient.getAmbientCube(entity) : nullptr;
+        FRenderableManager::RenderableSlots const* const ambient = anyAmbient ? rcmAmbient.getRenderableSlots(entity) : nullptr;
         if (ambient != nullptr) {
-            for (size_t k = 0; k < 6; k++) uboData.reserved[k] = ambient->side[k];
-            // lecodes 0064: raw slots (setReservedSlot) carry no signature - the cube's lighting must not read them
-            if (ambient->raw) uboData.reserved[6] = { 0.0f, 0.0f, 0.0f, 0.0f };
-            else uboData.reserved[6] = { ambient->skyVisibility, 7885.0f, -7885.0f, ambient->sunVisibility };
+            for (size_t k = 0; k < 6; k++) uboData.reserved[k] = ambient->v[k];
+            // lecodes 0064: the caller's slots (setReservedSlot) carry no signature - the cube's lighting must not read them
+            if (ambient->cube) uboData.reserved[6] = { ambient->skyVisibility, 7885.0f, -7885.0f, ambient->sunVisibility };
+            else uboData.reserved[6] = { 0.0f, 0.0f, 0.0f, 0.0f };
         } else {
             uboData.reserved[6] = { 0.0f, 0.0f, 0.0f, 0.0f };
         }

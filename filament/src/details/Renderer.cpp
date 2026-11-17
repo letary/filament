@@ -335,7 +335,7 @@ void FRenderer::skipFrame(uint64_t const vsyncSteadyClockTimeNano) {
         auto& d = mEngine.debug.renderer;
         d.cpu_prepare_us = d.cpu_shadows_us = d.cpu_structure_us = d.cpu_color_us = d.cpu_execute_us = 0.0f;
         d.cpu_prepare_scene_us = d.cpu_prepare_cull_us = d.cpu_prepare_shadow_us = d.cpu_prepare_ubo_us = 0.0f;
-        d.cpu_prepare_part_us = d.cpu_scene_loop_us = d.cpu_spare0_us = d.cpu_spare1_us = 0.0f;
+        d.cpu_prepare_part_us = d.cpu_scene_loop_us = d.cpu_build_us = d.cpu_compile_us = 0.0f;
     }
 
     FEngine& engine = mEngine;
@@ -430,7 +430,7 @@ bool FRenderer::beginFrame(FSwapChain* swapChain, uint64_t vsyncSteadyClockTimeN
         auto& d = mEngine.debug.renderer;
         d.cpu_prepare_us = d.cpu_shadows_us = d.cpu_structure_us = d.cpu_color_us = d.cpu_execute_us = 0.0f;
         d.cpu_prepare_scene_us = d.cpu_prepare_cull_us = d.cpu_prepare_shadow_us = d.cpu_prepare_ubo_us = 0.0f;
-        d.cpu_prepare_part_us = d.cpu_scene_loop_us = d.cpu_spare0_us = d.cpu_spare1_us = 0.0f;
+        d.cpu_prepare_part_us = d.cpu_scene_loop_us = d.cpu_build_us = d.cpu_compile_us = 0.0f;
     }
 
     // get the timestamp as soon as possible
@@ -1376,9 +1376,9 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
     }
 
     // create the pass, which generates all its commands (this is a heavy operation)
-    tPhase = phase_clock::now();   // lecodes 0056: timed into cpu_spare0_us (the command list of every visible primitive)
+    tPhase = phase_clock::now();   // lecodes 0056: the command list of every visible primitive
     RenderPass const pass{ passBuilder.build(engine, driver) };
-    engine.debug.renderer.cpu_spare0_us += phaseUs(tPhase, phase_clock::now());
+    engine.debug.renderer.cpu_build_us += phaseUs(tPhase, phase_clock::now());
 
     // now that we have the commands we can figure out if we have refraction commands
     auto* const firstRefractionCommand = [&view](RenderPass const& pass) {
@@ -1706,9 +1706,9 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
     fg.forwardResource(fgViewRenderTarget, input);
     fg.present(fgViewRenderTarget);
 
-    tPhase = phase_clock::now();   // lecodes 0056: the compile into cpu_spare1_us, the execute alone in cpu_execute_us
+    tPhase = phase_clock::now();   // lecodes 0056: the compile on its own, then the execute
     fg.compile();
-    engine.debug.renderer.cpu_spare1_us += phaseUs(tPhase, phase_clock::now());
+    engine.debug.renderer.cpu_compile_us += phaseUs(tPhase, phase_clock::now());
 
     //utils::io::sstream graphviz;
     //fg.export_graphviz(graphviz, view.getName());

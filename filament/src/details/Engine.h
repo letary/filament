@@ -823,8 +823,8 @@ public:
             float cpu_prepare_ubo_us = 0.0f;
             float cpu_prepare_part_us = 0.0f;   // the visibility partition of the renderable SoA
             float cpu_scene_loop_us = 0.0f;     // FScene::prepare's serial instance loop (of cpu_prepare_scene_us)
-            float cpu_spare0_us = 0.0f;         // free slots for the next measurement (no header change)
-            float cpu_spare1_us = 0.0f;
+            float cpu_build_us = 0.0f;          // lecodes 0056: RenderPassBuilder::build of the colour pass
+            float cpu_compile_us = 0.0f;        // ... and the frame graph's compile
         } renderer;
         struct {
             bool debug_froxel_visualization = false;

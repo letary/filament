@@ -798,7 +798,7 @@ void FRenderableManager::destroyComponents(Entity const* entities, size_t const 
         Entity const e = entities[k];
         if (Instance const ci = getInstance(e)) {
             destroyComponent(ci, driver);
-            mAmbientCubes.erase(e);   // lecodes 0029
+            mRenderableSlots.erase(e);   // lecodes 0029 / 0064
             mLodFades.erase(e);       // lecodes 0061
             manager.removeComponent(e);
         }
@@ -1145,28 +1145,26 @@ size_t FRenderableManager::getMorphTargetCount(Instance const instance) const no
 void FRenderableManager::setAmbientCube(Instance const ci, math::float4 const* cube, float const skyVisibility,
         float const sunVisibility) noexcept {
     if (!ci || cube == nullptr) return;
-    AmbientCube& c = mAmbientCubes[mManager.getEntity(ci)];
-    for (size_t k = 0; k < 6; k++) c.side[k] = cube[k];
+    RenderableSlots& c = mRenderableSlots[mManager.getEntity(ci)];
+    for (size_t k = 0; k < 6; k++) c.v[k] = cube[k];
     c.skyVisibility = skyVisibility;
     c.sunVisibility = sunVisibility;
-    c.raw = false;
+    c.cube = true;
 }
 
 // lecodes 0064
 void FRenderableManager::setReservedSlot(Instance const ci, size_t const index, math::float4 const& value) noexcept {
     if (!ci || index >= 6) return;
     auto const e = mManager.getEntity(ci);
-    auto it = mAmbientCubes.find(e);
-    if (it == mAmbientCubes.end() || !it->second.raw) {
-        AmbientCube c{};
-        c.raw = true;
-        it = mAmbientCubes.insert_or_assign(e, c).first;
+    auto it = mRenderableSlots.find(e);
+    if (it == mRenderableSlots.end() || it->second.cube) {   // none yet, or a cube: the slots start from zeros
+        it = mRenderableSlots.insert_or_assign(e, RenderableSlots{}).first;
     }
-    it->second.side[index] = value;
+    it->second.v[index] = value;
 }
 
 void FRenderableManager::clearAmbientCube(Instance const ci) noexcept {
-    if (ci) mAmbientCubes.erase(mManager.getEntity(ci));
+    if (ci) mRenderableSlots.erase(mManager.getEntity(ci));
 }
 
 // lecodes 0061
