@@ -49,6 +49,8 @@ public:
 
     void setLocalTransforms(math::mat4f const* localTransforms, size_t count, size_t offset);
 
+    void setReservedSlots(math::float4 const* slots, size_t count, size_t offset);   // lecodes 0065
+
     math::mat4f const& getLocalTransform(size_t index) const;
 
     void prepare(
@@ -63,6 +65,7 @@ private:
     friend class RenderableManager;
 
     utils::FixedCapacityVector<math::mat4f> mLocalTransforms;
+    utils::FixedCapacityVector<math::float4> mReservedSlots;   // lecodes 0065: empty, or mInstanceCount * 6
     utils::ImmutableCString mName;
     uint32_t mInstanceCount;
     uint32_t mIndex = 0;

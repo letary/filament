@@ -28,6 +28,10 @@ size_t InstanceBuffer::getInstanceCount() const noexcept {
     return downcast(this)->getInstanceCount();
 }
 
+void InstanceBuffer::setReservedSlots(math::float4 const* slots, size_t const count, size_t const offset) {
+    downcast(this)->setReservedSlots(slots, count, offset);
+}
+
 void InstanceBuffer::setLocalTransforms(
         math::mat4f const* localTransforms, size_t const count, size_t const offset) {
     downcast(this)->setLocalTransforms(localTransforms, count, offset);

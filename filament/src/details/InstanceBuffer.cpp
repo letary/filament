@@ -116,6 +116,17 @@ void FInstanceBuffer::setLocalTransforms(
     memcpy(mLocalTransforms.data() + offset, localTransforms, sizeof(math::mat4f) * count);
 }
 
+// lecodes 0065
+void FInstanceBuffer::setReservedSlots(math::float4 const* slots, size_t const count, size_t const offset) {
+    FILAMENT_CHECK_PRECONDITION(offset + count <= mInstanceCount)
+            << "setReservedSlots overflow. InstanceBuffer has only " << mInstanceCount << " instances.";
+    if (mReservedSlots.empty()) {
+        mReservedSlots.reserve(size_t(mInstanceCount) * 6);
+        mReservedSlots.resize(size_t(mInstanceCount) * 6);   // zeros
+    }
+    memcpy(mReservedSlots.data() + offset * 6, slots, sizeof(math::float4) * count * 6);
+}
+
 math::mat4f const& FInstanceBuffer::getLocalTransform(size_t index) const {
     FILAMENT_CHECK_PRECONDITION(index < mInstanceCount)
             << "getLocalTransform overflow: 'index (" << index
@@ -136,6 +147,10 @@ void FInstanceBuffer::prepare(
         buffer[index + i] = ubo;
         buffer[index + i].worldFromModelMatrix = model;
         buffer[index + i].worldFromModelNormalMatrix = math::prescaleForNormals(m);
+        if (!mReservedSlots.empty()) {   // lecodes 0065: the instance's own slots, no cube signature
+            for (size_t k = 0; k < 6; k++) buffer[index + i].reserved[k] = mReservedSlots[i * 6 + k];
+            buffer[index + i].reserved[6] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        }
     }
     mIndex = index;
 }

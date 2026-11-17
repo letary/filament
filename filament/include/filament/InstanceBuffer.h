@@ -125,6 +125,18 @@ public:
             size_t count, size_t offset = 0);
 
     /**
+     * lecodes 0065: per-INSTANCE reserved slots - six float4 for each instance (slots[instance * 6 + k]), written to
+     * that instance's reserved[0..5] as RenderableManager::setReservedSlot writes a renderable's (no ambient-cube
+     * signature). Instances of one mesh then differ in more than their transform - a lightmap's atlas rectangles.
+     * Not called: every instance takes the renderable's own block, as upstream.
+     *
+     * @param slots  count * 6 vectors, need not outlive this call
+     * @param count  the number of instances
+     * @param offset index of the first instance
+     */
+    void setReservedSlots(math::float4 const* UTILS_NONNULL slots, size_t count, size_t offset = 0);
+
+    /**
      * Returns the local transform for a given instance.
      * @param index The index of the instance.
      * @return The local transform of the instance.
