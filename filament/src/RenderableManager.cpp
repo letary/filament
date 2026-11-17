@@ -232,6 +232,10 @@ void RenderableManager::clearAmbientCube(Instance const instance) noexcept {
     downcast(this)->clearAmbientCube(instance);
 }
 
+void RenderableManager::setReservedSlot(Instance const instance, size_t const index, math::float4 const& value) noexcept {
+    downcast(this)->setReservedSlot(instance, index, value);
+}
+
 void RenderableManager::setLodFade(Instance const instance, float const fade) noexcept {
     downcast(this)->setLodFade(instance, fade);
 }

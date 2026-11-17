@@ -524,7 +524,9 @@ void FScene::prepareVisibleRenderables(Range<uint32_t> visibleRenderables, Scene
         FRenderableManager::AmbientCube const* const ambient = anyAmbient ? rcmAmbient.getAmbientCube(entity) : nullptr;
         if (ambient != nullptr) {
             for (size_t k = 0; k < 6; k++) uboData.reserved[k] = ambient->side[k];
-            uboData.reserved[6] = { ambient->skyVisibility, 7885.0f, -7885.0f, ambient->sunVisibility };
+            // lecodes 0064: raw slots (setReservedSlot) carry no signature - the cube's lighting must not read them
+            if (ambient->raw) uboData.reserved[6] = { 0.0f, 0.0f, 0.0f, 0.0f };
+            else uboData.reserved[6] = { ambient->skyVisibility, 7885.0f, -7885.0f, ambient->sunVisibility };
         } else {
             uboData.reserved[6] = { 0.0f, 0.0f, 0.0f, 0.0f };
         }

@@ -192,7 +192,10 @@ public:
     // lecodes 0029: the baked ambient cube of a renderable (see the public header). A side table by entity rather than
     // a field of the component SoA and of the scene's: few renderables carry one, and the upstream structures stay as
     // they are for the next rebase. Written between frames by the client, read by FScene::prepareVisibleRenderables.
-    struct AmbientCube { math::float4 side[6]; float skyVisibility; float sunVisibility; };
+    // raw (lecodes 0064, setReservedSlot): side[] are six free per-renderable vectors of the caller's, not a cube -
+    // written to reserved[0..5] WITHOUT the cube's signature in reserved[6]
+    struct AmbientCube { math::float4 side[6]; float skyVisibility; float sunVisibility; bool raw = false; };
+    void setReservedSlot(Instance instance, size_t index, math::float4 const& value) noexcept;
     void setAmbientCube(Instance instance, math::float4 const* cube, float skyVisibility, float sunVisibility) noexcept;
     void clearAmbientCube(Instance instance) noexcept;
     bool hasAmbientCubes() const noexcept { return !mAmbientCubes.empty(); }

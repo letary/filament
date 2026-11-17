@@ -1149,6 +1149,20 @@ void FRenderableManager::setAmbientCube(Instance const ci, math::float4 const* c
     for (size_t k = 0; k < 6; k++) c.side[k] = cube[k];
     c.skyVisibility = skyVisibility;
     c.sunVisibility = sunVisibility;
+    c.raw = false;
+}
+
+// lecodes 0064
+void FRenderableManager::setReservedSlot(Instance const ci, size_t const index, math::float4 const& value) noexcept {
+    if (!ci || index >= 6) return;
+    auto const e = mManager.getEntity(ci);
+    auto it = mAmbientCubes.find(e);
+    if (it == mAmbientCubes.end() || !it->second.raw) {
+        AmbientCube c{};
+        c.raw = true;
+        it = mAmbientCubes.insert_or_assign(e, c).first;
+    }
+    it->second.side[index] = value;
 }
 
 void FRenderableManager::clearAmbientCube(Instance const ci) noexcept {

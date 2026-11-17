@@ -54,14 +54,15 @@ void initObjectUniforms() {
 #if MATERIAL_FEATURE_LEVEL > 0
     object_uniforms_ambientCube[6]              = objectUniforms.data[i].reserved[6];
     object_uniforms_lodFade                     = objectUniforms.data[i].reserved[7].y == 7886.0 ? objectUniforms.data[i].reserved[7].x : 0.0;
-    if (object_uniforms_ambientCube[6].yz == vec2(7885.0, -7885.0)) {   // the signature (Scene.cpp), not a flag
-        object_uniforms_ambientCube[0]          = objectUniforms.data[i].reserved[0];
-        object_uniforms_ambientCube[1]          = objectUniforms.data[i].reserved[1];
-        object_uniforms_ambientCube[2]          = objectUniforms.data[i].reserved[2];
-        object_uniforms_ambientCube[3]          = objectUniforms.data[i].reserved[3];
-        object_uniforms_ambientCube[4]          = objectUniforms.data[i].reserved[4];
-        object_uniforms_ambientCube[5]          = objectUniforms.data[i].reserved[5];
-    }
+    // lecodes 0064: read whether or not the cube's signature is there - without it they are the renderable's free
+    // slots (RenderableManager::setReservedSlot), which a material reads itself; the cube's own lighting still checks
+    // the signature in [6] before it uses them. A shader that reads neither drops the copies.
+    object_uniforms_ambientCube[0]              = objectUniforms.data[i].reserved[0];
+    object_uniforms_ambientCube[1]              = objectUniforms.data[i].reserved[1];
+    object_uniforms_ambientCube[2]              = objectUniforms.data[i].reserved[2];
+    object_uniforms_ambientCube[3]              = objectUniforms.data[i].reserved[3];
+    object_uniforms_ambientCube[4]              = objectUniforms.data[i].reserved[4];
+    object_uniforms_ambientCube[5]              = objectUniforms.data[i].reserved[5];
 #endif
 }
 

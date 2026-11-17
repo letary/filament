@@ -763,6 +763,15 @@ public:
     void clearAmbientCube(Instance instance) noexcept;
 
     /**
+     * lecodes 0064: A PER-RENDERABLE VECTOR FOR THE MATERIAL. Six free float4 slots (index 0..5) a material's shader
+     * reads as `object_uniforms_ambientCube[index]` - data that differs per renderable while the material instance
+     * is shared (a lightmap's atlas rectangle per primitive: thousands of placements, one instance). The slots are
+     * the ambient cube's storage, so a renderable has one or the other: setAmbientCube replaces the slots and the
+     * first setReservedSlot replaces a cube; clearAmbientCube clears both. Feature level 1 and up.
+     */
+    void setReservedSlot(Instance instance, size_t index, math::float4 const& value) noexcept;
+
+    /**
      * lecodes 0061: LOD CROSS-FADE. `fade` = 0: drawn as usual. Else a screen-door share for a level-of-detail switch:
      * fade in (0, 1] = the renderable coming IN keeps the pixels whose per-frame dither noise is under `fade`; fade in
      * [-1, 0) = the one going OUT keeps the complement (noise >= -fade), so the two levels together cover every pixel
