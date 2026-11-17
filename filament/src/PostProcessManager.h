@@ -113,6 +113,16 @@ public:
             RenderPassBuilder const& passBuilder, uint8_t structureRenderFlags,
             uint32_t width, uint32_t height, float scale) noexcept;
 
+    // lecodes 0062: the structure buffer SSAO reads (half resolution, mipmapped) built from a
+    // single-sample depth the frame already has, instead of a depth pass over the scene
+    FrameGraphId<FrameGraphTexture> sceneStructure(FrameGraph& fg,
+            FrameGraphId<FrameGraphTexture> depth) noexcept;
+
+    // lecodes 0062: the AO buffer multiplied onto `color` (kept multisampled when it is)
+    FrameGraphId<FrameGraphTexture> aoComposite(FrameGraph& fg,
+            FrameGraphId<FrameGraphTexture> color, FrameGraphId<FrameGraphTexture> ssao,
+            uint8_t samples) noexcept;
+
     // reflections pass
     FrameGraphId<FrameGraphTexture> ssr(FrameGraph& fg,
             RenderPassBuilder const& passBuilder,

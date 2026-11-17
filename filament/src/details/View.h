@@ -263,6 +263,10 @@ public:
     void setSceneDepthSamplingEnabled(bool const enabled) noexcept { mSceneDepthSamplingEnabled = enabled; }
     bool isSceneDepthSamplingEnabled() const noexcept { return mSceneDepthSamplingEnabled; }
 
+    // lecodes 0062 (see View.h): AO from the color pass's own depth, multiplied onto its opaque half
+    void setAmbientOcclusionAfterOpaque(bool const enabled) noexcept { mAmbientOcclusionAfterOpaque = enabled; }
+    bool isAmbientOcclusionAfterOpaque() const noexcept { return mAmbientOcclusionAfterOpaque; }
+
     void setStereoscopicOptions(StereoscopicOptions const& options) noexcept;
 
     utils::FixedCapacityVector<Camera const*> getDirectionalShadowCameras() const noexcept {
@@ -636,6 +640,7 @@ private:
     bool mHasPostProcessPass = true;
     bool mStencilBufferEnabled = false;
     bool mSceneDepthSamplingEnabled = false;   // lecodes 0017
+    bool mAmbientOcclusionAfterOpaque = false; // lecodes 0062
     AmbientOcclusionOptions mAmbientOcclusionOptions{};
     ShadowType mShadowType = ShadowType::PCF;
     VsmShadowOptions mVsmShadowOptions; // FIXME: this should probably be per-light

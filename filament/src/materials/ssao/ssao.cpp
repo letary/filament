@@ -28,8 +28,10 @@
 namespace filament {
 
 static const StaticMaterialInfo sMaterialList[] = {
+    { "aoComposite",                MATERIAL(SSAO, AOCOMPOSITE) },   // lecodes 0062
     { "bilateralBlur",              MATERIAL(SSAO, BILATERALBLUR) },
     { "bilateralBlurBentNormals",   MATERIAL(SSAO, BILATERALBLURBENTNORMALS) },
+    { "halfDepth",                  MATERIAL(SSAO, HALFDEPTH) },     // lecodes 0062
     { "mipmapDepth",                MATERIAL(SSAO, MIPMAPDEPTH) },
     { "sao",                        MATERIAL(SSAO, SAO) },
     { "saoBentNormals",             MATERIAL(SSAO, SAOBENTNORMALS) },

@@ -343,6 +343,14 @@ bool View::isSceneDepthSamplingEnabled() const noexcept {
     return downcast(this)->isSceneDepthSamplingEnabled();
 }
 
+void View::setAmbientOcclusionAfterOpaque(bool const enabled) noexcept {
+    downcast(this)->setAmbientOcclusionAfterOpaque(enabled);
+}
+
+bool View::isAmbientOcclusionAfterOpaque() const noexcept {
+    return downcast(this)->isAmbientOcclusionAfterOpaque();
+}
+
 void View::setStereoscopicOptions(const StereoscopicOptions& options) noexcept {
     return downcast(this)->setStereoscopicOptions(options);
 }

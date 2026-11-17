@@ -310,7 +310,7 @@ RenderPass::Command const* RendererUtils::getFirstRefractionCommand(
 }
 
 RenderPass::Command const* RendererUtils::getFirstBlendedCommand(
-    RenderPass const& pass) noexcept {
+    RenderPass const& pass, bool const orEnd) noexcept {
 
     // lecodes 0017: the first blended object of the default channel — everything before it is
     // opaque (or in a lower channel), everything from it on is blended or in a higher channel.
@@ -324,7 +324,7 @@ RenderPass::Command const* RendererUtils::getFirstBlendedCommand(
 
     // the sentinel's pass bits read as BLENDED too: nothing to draw after the split
     if (blended == pass.end() || blended->key == uint64_t(RenderPass::Pass::SENTINEL)) {
-        return nullptr;
+        return orEnd ? pass.end() : nullptr;
     }
     return blended;
 }
@@ -336,10 +336,11 @@ RendererUtils::ColorPassOutput RendererUtils::splitColorPass(
         PostProcessManager::ScreenSpaceRefConfig const& ssrConfig,
         PostProcessManager::ColorGradingConfig const colorGradingConfig,
         RenderPass const& pass, RenderPass::Command const* const split,
-        bool const hasRefraction, bool const hasSceneDepth) noexcept {
+        bool const hasRefraction, bool const hasSceneDepth,
+        AoAfterOpaque const* const ao) noexcept {
 
     assert_invariant(split);
-    assert_invariant(hasRefraction || hasSceneDepth);
+    assert_invariant(hasRefraction || hasSceneDepth || ao);
 
     // the first half always draws into a fresh target
     assert_invariant(!colorPassInput.linearColor);
@@ -361,26 +362,42 @@ RendererUtils::ColorPassOutput RendererUtils::splitColorPass(
             config, { .asSubpass = false, .customResolve = false },
             pass.getExecutor(pass.begin(), split));
 
+    // lecodes 0017 / 0062: the depth the first half wrote, as a single-sample texture a later
+    // pass can sample — resolved when the target is multisampled (the driver's resolve, or the
+    // resolveDepth shader where the backend has none: Vulkan, Metal), copied otherwise (sampling
+    // an attachment of the pass being drawn is a feedback loop).
+    FrameGraphId<FrameGraphTexture> sceneDepth;
+    if (hasSceneDepth || ao) {
+        auto const& depthDesc = fg.getDescriptor(opaquePassOutput.depth);
+        sceneDepth = depthDesc.samples > 1
+                ? ppm.resolve(fg, "Scene Depth", opaquePassOutput.depth, { .levels = 1 })
+                : ppm.blitDepth(fg, opaquePassOutput.depth);
+    }
+
+    // lecodes 0062: the AO of the opaque scene from that depth, multiplied onto its color —
+    // before the refraction mip chain is built, so a refractive object sees the occluded scene
+    FrameGraphId<FrameGraphTexture> opaqueColor = opaquePassOutput.linearColor;
+    if (ao) {
+        auto const structure = ppm.sceneStructure(fg, sceneDepth);
+        auto const ssao = ppm.screenSpaceAmbientOcclusion(fg, ao->svp, *ao->cameraInfo,
+                structure, ao->options);
+        opaqueColor = ppm.aoComposite(fg, opaqueColor, ssao, config.msaa);
+    }
+
     if (hasRefraction) {
         // Generate the mipmap chain
         // Note: we can run some post-processing effects while the "color pass" descriptor set
         // in bound because only the descriptor 0 (frame uniforms) matters, and it's
         // present in both.
         PostProcessManager::generateMipmapSSR(ppm, fg,
-                opaquePassOutput.linearColor,
+                opaqueColor,
                 ssrConfig.refraction,
                 true, ssrConfig);
     }
 
     if (hasSceneDepth) {
-        // lecodes 0017: the depth the first half wrote, as a single-sample texture the second
-        // half can sample — resolved when the target is multisampled (the driver's resolve, or
-        // the resolveDepth shader where the backend has none: Vulkan, Metal), copied otherwise
-        // (sampling an attachment of the pass being drawn is a feedback loop).
-        auto const& depthDesc = fg.getDescriptor(opaquePassOutput.depth);
-        colorPassInput.structure = depthDesc.samples > 1
-                ? ppm.resolve(fg, "Scene Depth", opaquePassOutput.depth, { .levels = 1 })
-                : ppm.blitDepth(fg, opaquePassOutput.depth);
+        // lecodes 0017: bound to the second half as sampler0_structure
+        colorPassInput.structure = sceneDepth;
         config.hasSceneDepth = true;
     }
 
@@ -388,7 +405,7 @@ RendererUtils::ColorPassOutput RendererUtils::splitColorPass(
     // This uses the same framebuffer (color and depth) used by the opaque pass.
     // For this reason, the `colorBufferDesc` parameter of colorPass() below is only used  for
     // the width and height.
-    colorPassInput.linearColor = opaquePassOutput.linearColor;
+    colorPassInput.linearColor = opaqueColor;
     colorPassInput.depth = opaquePassOutput.depth;
 
     // Since we're reusing the existing target we don't want to clear any of its buffer.

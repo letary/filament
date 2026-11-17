@@ -839,6 +839,126 @@ FrameGraphId<FrameGraphTexture> PostProcessManager::ssr(FrameGraph& fg,
     return ssrPass->reflections;
 }
 
+// lecodes 0062: see PostProcessManager.h. Level 0 is the input depth at half size (one texel of
+// each 2x2 block: halfDepth.mat), the levels under it as in structure() - what SSAO expects of the
+// structure buffer, without a draw call per object.
+FrameGraphId<FrameGraphTexture> PostProcessManager::sceneStructure(FrameGraph& fg,
+        FrameGraphId<FrameGraphTexture> const depth) noexcept {
+    auto const& inDesc = fg.getDescriptor(depth);
+    const uint32_t width  = std::max(32u, (inDesc.width + 1u) / 2u);
+    const uint32_t height = std::max(32u, (inDesc.height + 1u) / 2u);
+    const size_t levelCount = std::min(8, FTexture::maxLevelCount(width, height) - 5);
+    assert_invariant(levelCount >= 1);
+
+    struct SceneStructureData {
+        FrameGraphId<FrameGraphTexture> input;
+        FrameGraphId<FrameGraphTexture> depth;
+    };
+    auto const& basePass = fg.addPass<SceneStructureData>("Scene Structure",
+            [&](FrameGraph::Builder& builder, auto& data) {
+                data.input = builder.sample(depth);
+                data.depth = builder.createTexture("Structure Buffer", {
+                        .width = width, .height = height,
+                        .levels = uint8_t(levelCount),
+                        .format = TextureFormat::DEPTH32F });
+                data.depth = builder.write(data.depth,
+                        FrameGraphTexture::Usage::DEPTH_ATTACHMENT);
+                builder.declareRenderPass("Scene Structure Target", {
+                        .attachments = { .depth = data.depth } });
+            },
+            [=, this](FrameGraphResources const& resources, auto const& data, DriverApi& driver) {
+                getStructureDescriptorSet().bind(driver);
+                bindPerRenderableDescriptorSet(driver);
+                auto const out = resources.getRenderPassInfo();
+                auto& material = getPostProcessMaterial("halfDepth");
+                FMaterialInstance* const mi = getMaterialInstance(mEngine, driver, material);
+                mi->setParameter("depth", resources.getTexture(data.input), SamplerParams{
+                        .filterMag = SamplerMagFilter::NEAREST,
+                        .filterMin = SamplerMinFilter::NEAREST });
+                commitAndRenderFullScreenQuad(driver, out, mi);
+                unbindAllDescriptorSets(driver);
+            });
+
+    auto const base = basePass->depth;
+
+    struct StructureMipmapData {
+        FrameGraphId<FrameGraphTexture> depth;
+    };
+    fg.addPass<StructureMipmapData>("Scene Structure Mipmap",
+            [&](FrameGraph::Builder& builder, auto& data) {
+                if (levelCount > 1) {
+                    builder.reserveRenderTargets(levelCount - 1);
+                }
+                data.depth = builder.sample(base);
+                for (size_t i = 1; i < levelCount; i++) {
+                    auto out = builder.createSubresource(data.depth, "Structure mip", {
+                            .level = uint8_t(i)
+                    });
+                    out = builder.write(out, FrameGraphTexture::Usage::DEPTH_ATTACHMENT);
+                    builder.declareRenderPass("Structure mip target", {
+                            .attachments = { .depth = out }
+                    });
+                }
+            },
+            [=, this](FrameGraphResources const& resources, auto const& data, DriverApi& driver) {
+                getStructureDescriptorSet().bind(driver);
+                bindPerRenderableDescriptorSet(driver);
+
+                auto in = resources.getTexture(data.depth);
+                auto& material = getPostProcessMaterial("mipmapDepth");
+                FMaterial const* const ma = material.getMaterial(mEngine);
+                FMaterialInstance* const mi = getMaterialInstance(driver, ma);
+                auto pipeline = getPipelineState(mi);
+                for (size_t level = 0; level < levelCount - 1; level++) {
+                    auto out = resources.getRenderPassInfo(level);
+                    auto th = driver.createTextureView(in, level, 1);
+                    mi->setParameter("depth", th, SamplerParams{
+                        .filterMin = SamplerMinFilter::NEAREST_MIPMAP_NEAREST });
+                    mi->commit(driver, getUboManager());
+                    mi->use(driver);
+                    renderFullScreenQuad(out, pipeline, driver);
+                    DescriptorSet::unbind(driver, DescriptorSetBindingPoints::PER_MATERIAL);
+                    driver.destroyTexture(th);
+                }
+                unbindAllDescriptorSets(driver);
+            });
+
+    return base;
+}
+
+// lecodes 0062: see PostProcessManager.h
+FrameGraphId<FrameGraphTexture> PostProcessManager::aoComposite(FrameGraph& fg,
+        FrameGraphId<FrameGraphTexture> const color, FrameGraphId<FrameGraphTexture> const ssao,
+        uint8_t const samples) noexcept {
+    struct AoCompositeData {
+        FrameGraphId<FrameGraphTexture> color;
+        FrameGraphId<FrameGraphTexture> ssao;
+    };
+    auto const& pass = fg.addPass<AoCompositeData>("AO Composite",
+            [&](FrameGraph::Builder& builder, auto& data) {
+                data.ssao = builder.sample(ssao);
+                // the color is kept: this pass only multiplies into it
+                data.color = builder.read(color, FrameGraphTexture::Usage::COLOR_ATTACHMENT);
+                data.color = builder.write(data.color, FrameGraphTexture::Usage::COLOR_ATTACHMENT);
+                builder.declareRenderPass("AO Composite Target", {
+                        .attachments = { .color = { data.color } },
+                        .samples = samples });
+            },
+            [=, this](FrameGraphResources const& resources, auto const& data, DriverApi& driver) {
+                getStructureDescriptorSet().bind(driver);
+                bindPerRenderableDescriptorSet(driver);
+                auto const out = resources.getRenderPassInfo();
+                auto& material = getPostProcessMaterial("aoComposite");
+                FMaterialInstance* const mi = getMaterialInstance(mEngine, driver, material);
+                mi->setParameter("ssao", resources.getTexture(data.ssao), SamplerParams{
+                        .filterMag = SamplerMagFilter::LINEAR,
+                        .filterMin = SamplerMinFilter::LINEAR });
+                commitAndRenderFullScreenQuad(driver, out, mi);
+                unbindAllDescriptorSets(driver);
+            });
+    return pass->color;
+}
+
 FrameGraphId<FrameGraphTexture> PostProcessManager::screenSpaceAmbientOcclusion(FrameGraph& fg,
         filament::Viewport const&, const CameraInfo& cameraInfo,
         FrameGraphId<FrameGraphTexture> const depth,

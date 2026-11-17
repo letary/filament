@@ -1,0 +1,34 @@
+// lecodes 0062: level 0 of the structure buffer built from the frame's own depth
+// (PostProcessManager::sceneStructure) - one texel of each 2x2 block, always the same one. The
+// rotated sub-sample of mipmapDepth.mat is for the levels under it: at level 0 it would move the
+// sample from pixel to pixel, and SAO derives its normals from this level's neighbours.
+material {
+    name : halfDepth,
+    parameters : [
+        {
+            type : sampler2d,
+            name : depth,
+            precision: high,
+            filterable: false
+        }
+    ],
+    variables : [
+    ],
+    outputs : [
+        {
+            name : depth,
+            target : depth,
+            type : float
+        }
+    ],
+    domain : postprocess,
+    depthWrite : true,
+    depthCulling : false,
+    culling: none
+}
+
+fragment {
+    void postProcess(inout PostProcessInputs postProcess) {
+        postProcess.depth = texelFetch(materialParams_depth, 2 * ivec2(gl_FragCoord.xy), 0).r;
+    }
+}

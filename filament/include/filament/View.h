@@ -794,6 +794,22 @@ public:
     bool isSceneDepthSamplingEnabled() const noexcept;
 
     /**
+     * lecodes 0062: where the ambient occlusion's depth comes from.
+     *
+     * Off (default): upstream behaviour - a depth-only "structure" pass re-draws every opaque
+     * object before the color pass (a second command list and a second set of draw calls for the
+     * whole view), and each opaque material samples the AO buffer in its lighting, where it
+     * attenuates the indirect light.
+     * On: no structure pass for AO. The color pass is split after its opaque objects, the AO is
+     * computed from that half's own depth (downsampled to half resolution) and multiplied onto
+     * the color before the blended objects are drawn. It darkens direct light as well as
+     * indirect; AmbientOcclusionOptions::resolution, upsampling, bentNormals and ssct are ignored.
+     * Cost while on: one render-pass break, a depth resolve or copy, one full-screen draw.
+     */
+    void setAmbientOcclusionAfterOpaque(bool enabled) noexcept;
+    bool isAmbientOcclusionAfterOpaque() const noexcept;
+
+    /**
      * Sets the stereoscopic rendering options for this view.
      *
      * Currently, only one type of stereoscopic rendering is supported: side-by-side.

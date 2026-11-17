@@ -999,7 +999,16 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
     tPhase = phase_clock::now();
     view.prepare(engine, driver, arena, svp, taaCameraInfo, getShaderUserTime(), needsAlphaChannel);
     view.prepareLodBias(bias, derivativeScale);
-    view.prepareSSAO(aoOptions);
+    // lecodes 0062: AO after the opaques (View::setAmbientOcclusionAfterOpaque) - the materials
+    // sample no AO buffer, the structure pass is not asked for it; see the color pass split below
+    const bool aoAfterOpaque = aoOptions.enabled && view.isAmbientOcclusionAfterOpaque();
+    if (aoAfterOpaque) {
+        auto materialAo = aoOptions;
+        materialAo.enabled = false;
+        view.prepareSSAO(materialAo);
+    } else {
+        view.prepareSSAO(aoOptions);
+    }
     view.prepareSSR(engine, cameraInfo, ssrConfig.lodOffset, ssReflectionsOptions);
     view.prepareShadowMapping();
     // There might be a bug here with svp's origin; normally the origin could offset when the
@@ -1220,7 +1229,7 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
     // --------------------------------------------------------------------------------------------
     // SSAO pass
 
-    if (aoOptions.enabled) {
+    if (aoOptions.enabled && !aoAfterOpaque) {
         // we could rely on FrameGraph culling, but this creates unnecessary CPU work
         auto ssao = ppm.screenSpaceAmbientOcclusion(fg, svp, cameraInfo, structure, aoOptions);
         blackboard["ssao"] = ssao;
@@ -1399,7 +1408,18 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
     const bool hasSceneDepth = view.isSceneDepthSamplingEnabled() &&
             (hasScreenSpaceRefraction || firstBlendedCommand != nullptr);
 
-    hasSplitColorPass = hasScreenSpaceRefraction || hasSceneDepth;
+    // lecodes 0062: AO after the opaques splits there too - at the refraction or scene-depth split
+    // when there is one, else at the first blended command, else at the end of the list
+    RendererUtils::AoAfterOpaque aoAfterOpaqueConfig{ aoOptions, &cameraInfo, svp };
+    aoAfterOpaqueConfig.options.bentNormals = false;
+    aoAfterOpaqueConfig.options.ssct.enabled = false;
+    const bool hasAoAfterOpaque = aoAfterOpaque && !pass.empty();
+    RenderPass::Command const* aoSplitCommand = nullptr;
+    if (hasAoAfterOpaque && !firstRefractionCommand && !firstBlendedCommand) {
+        aoSplitCommand = RendererUtils::getFirstBlendedCommand(pass, true);
+    }
+
+    hasSplitColorPass = hasScreenSpaceRefraction || hasSceneDepth || hasAoAfterOpaque;
 
     // this makes the viewport relative to xvp
     // FIXME: we should use 'vp' when rendering directly into the swapchain, but that's hard to
@@ -1437,8 +1457,10 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
                         .ssr = ssrConfig.ssr,
                 .structure = structure
             }, config, ssrConfig, colorGradingConfigForColor,
-             pass, firstRefractionCommand ? firstRefractionCommand : firstBlendedCommand,
-             hasScreenSpaceRefraction, hasSceneDepth);
+             pass, firstRefractionCommand ? firstRefractionCommand :
+                     firstBlendedCommand ? firstBlendedCommand : aoSplitCommand,
+             hasScreenSpaceRefraction, hasSceneDepth,
+             hasAoAfterOpaque ? &aoAfterOpaqueConfig : nullptr);
     }
 
     if (colorGradingConfig.customResolve) {

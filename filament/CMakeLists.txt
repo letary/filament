@@ -310,6 +310,8 @@ set(MATERIAL_SRCS
         src/materials/shadowmap.mat
         src/materials/ssao/bilateralBlur.mat
         src/materials/ssao/bilateralBlurBentNormals.mat
+        src/materials/ssao/aoComposite.mat
+        src/materials/ssao/halfDepth.mat
         src/materials/ssao/mipmapDepth.mat
         src/materials/ssao/sao.mat
         src/materials/ssao/saoBentNormals.mat

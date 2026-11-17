@@ -105,6 +105,14 @@ public:
             PostProcessManager::ColorGradingConfig colorGradingConfig,
             RenderPass::Executor passExecutor) noexcept;
 
+    // lecodes 0062 (View::setAmbientOcclusionAfterOpaque): what splitColorPass needs to compute
+    // the AO from the first half's depth and multiply it onto that half's color
+    struct AoAfterOpaque {
+        AmbientOcclusionOptions options;
+        CameraInfo const* cameraInfo;
+        filament::Viewport svp;
+    };
+
     // The color pass in two halves around `split` (upstream's refraction pass, generalised by
     // lecodes 0017): the first half draws into a target that keeps its sample buffer, then
     // `hasRefraction` builds the SSR mip chain from its color and `hasSceneDepth` captures its
@@ -117,7 +125,8 @@ public:
             PostProcessManager::ScreenSpaceRefConfig const& ssrConfig,
             PostProcessManager::ColorGradingConfig colorGradingConfig,
             RenderPass const& pass, RenderPass::Command const* split,
-            bool hasRefraction, bool hasSceneDepth) noexcept;
+            bool hasRefraction, bool hasSceneDepth,
+            AoAfterOpaque const* ao = nullptr) noexcept;
 
     static void readPixels(backend::DriverApi& driver,
             backend::Handle<backend::HwRenderTarget> renderTargetHandle,
@@ -127,7 +136,9 @@ public:
     static RenderPass::Command const* getFirstRefractionCommand(RenderPass const& pass) noexcept;
 
     // lecodes 0017: the first blended command of the default channel (nullptr when there is none)
-    static RenderPass::Command const* getFirstBlendedCommand(RenderPass const& pass) noexcept;
+    // `orEnd` (lecodes 0062): with nothing blended, the end of the list instead of nullptr
+    static RenderPass::Command const* getFirstBlendedCommand(RenderPass const& pass,
+            bool orEnd = false) noexcept;
 };
 
 } // namespace filament
