@@ -794,6 +794,26 @@ public:
     bool isSceneDepthSamplingEnabled() const noexcept;
 
     /**
+     * lecodes 0067: a luminance meter for auto exposure. While a target is set, each render of
+     * this View also draws the scene's log-luminance into it: the linear HDR color right after
+     * the color pass (before TAA, bloom and tone mapping), box-filtered down to the target's
+     * size — 16 bilinear taps per texel, averaged in log2. The caller reads it back
+     * (Renderer::readPixels) and divides by the exposure of that frame.
+     *
+     * The target must have one RGBA8 color attachment (usage COLOR_ATTACHMENT | BLIT_SRC), a few
+     * dozen texels a side. A texel holds v = clamp(log2(luminance) / 32 + 0.5, 0, 1) on 16 bits:
+     * R = the high byte, G = the low one, i.e. log2(luminance) = ((R + G / 255) / 255 - 0.5) * 32
+     * with R and G as bytes; the luminance is the EXPOSED one (what the color buffer holds,
+     * 1.0 = display white before tone mapping).
+     *
+     * Nothing is drawn while the View's post-processing is off. A View with a target never
+     * tone-maps as a subpass (the linear color must exist as a texture).
+     * nullptr (default): no pass, zero cost.
+     */
+    void setLuminanceTarget(RenderTarget* UTILS_NULLABLE target) noexcept;
+    RenderTarget* UTILS_NULLABLE getLuminanceTarget() const noexcept;
+
+    /**
      * lecodes 0062: where the ambient occlusion's depth comes from.
      *
      * Off (default): upstream behaviour - a depth-only "structure" pass re-draws every opaque

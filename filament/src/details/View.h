@@ -263,6 +263,10 @@ public:
     void setSceneDepthSamplingEnabled(bool const enabled) noexcept { mSceneDepthSamplingEnabled = enabled; }
     bool isSceneDepthSamplingEnabled() const noexcept { return mSceneDepthSamplingEnabled; }
 
+    // lecodes 0067 (see View.h): the log-luminance of the linear color, drawn into a caller's target
+    void setLuminanceTarget(FRenderTarget* target) noexcept { mLuminanceTarget = target; }
+    FRenderTarget* getLuminanceTarget() const noexcept { return mLuminanceTarget; }
+
     // lecodes 0062 (see View.h): AO from the color pass's own depth, multiplied onto its opaque half
     void setAmbientOcclusionAfterOpaque(bool const enabled) noexcept { mAmbientOcclusionAfterOpaque = enabled; }
     bool isAmbientOcclusionAfterOpaque() const noexcept { return mAmbientOcclusionAfterOpaque; }
@@ -640,6 +644,7 @@ private:
     bool mHasPostProcessPass = true;
     bool mStencilBufferEnabled = false;
     bool mSceneDepthSamplingEnabled = false;   // lecodes 0017
+    FRenderTarget* mLuminanceTarget = nullptr; // lecodes 0067
     bool mAmbientOcclusionAfterOpaque = false; // lecodes 0062
     AmbientOcclusionOptions mAmbientOcclusionOptions{};
     ShadowType mShadowType = ShadowType::PCF;

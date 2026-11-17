@@ -343,6 +343,14 @@ bool View::isSceneDepthSamplingEnabled() const noexcept {
     return downcast(this)->isSceneDepthSamplingEnabled();
 }
 
+void View::setLuminanceTarget(RenderTarget* target) noexcept {
+    downcast(this)->setLuminanceTarget(downcast(target));
+}
+
+RenderTarget* View::getLuminanceTarget() const noexcept {
+    return downcast(this)->getLuminanceTarget();
+}
+
 void View::setAmbientOcclusionAfterOpaque(bool const enabled) noexcept {
     downcast(this)->setAmbientOcclusionAfterOpaque(enabled);
 }

@@ -1,0 +1,55 @@
+// lecodes 0067 (View::setLuminanceTarget): the log-luminance of the linear color, box-filtered.
+// 4 x 4 bilinear taps over the output texel's footprint, averaged in log2 (a geometric mean: one
+// bright sliver does not own its block), written on 16 bits over R (high byte) and G (low byte):
+// v = clamp(log2(luminance) / 32 + 0.5, 0, 1). RGBA8 on purpose: every backend reads it back.
+material {
+    name : luminanceMeter,
+    parameters : [
+        {
+            type : sampler2d,
+            name : color,
+            precision: medium
+        },
+        {
+            type : float4,
+            name : viewport,
+            precision: high
+        },
+        {
+            type : float2,
+            name : tapStep,
+            precision: high
+        }
+    ],
+    variables : [
+        vertex
+    ],
+    depthWrite : false,
+    depthCulling : false,
+    domain: postprocess
+}
+
+vertex {
+    void postProcessVertex(inout PostProcessVertexInputs postProcess) {
+        postProcess.vertex.xy = materialParams.viewport.xy + postProcess.normalizedUV * materialParams.viewport.zw;
+        postProcess.vertex.xy = uvToRenderTargetUV(postProcess.vertex.xy);
+    }
+}
+
+fragment {
+    void postProcess(inout PostProcessInputs postProcess) {
+        highp float sum = 0.0;
+        for (int j = 0; j < 4; j++) {
+            for (int i = 0; i < 4; i++) {
+                highp vec2 uv = variable_vertex.xy +
+                        (vec2(float(i), float(j)) - 1.5) * materialParams.tapStep;
+                highp vec3 c = textureLod(materialParams_color, uv, 0.0).rgb;
+                highp float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+                // 2^-16 .. 2^16: the range the 16 bits cover; max() first so a NaN texel reads black
+                sum += log2(min(max(l, 1.52587890625e-05), 65536.0));
+            }
+        }
+        highp float v = clamp(sum / (16.0 * 32.0) + 0.5, 0.0, 1.0) * 255.0;
+        postProcess.color = vec4(floor(v) / 255.0, fract(v), 0.0, 1.0);
+    }
+}

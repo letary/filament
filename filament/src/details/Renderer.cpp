@@ -843,7 +843,8 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
     const bool isSubpassPossible =
              msaaSampleCount <= 1 &&
              hasColorGrading &&
-             !bloomOptions.enabled && !dofOptions.enabled && !taaOptions.enabled;
+             !bloomOptions.enabled && !dofOptions.enabled && !taaOptions.enabled &&
+             !view.getLuminanceTarget();   // lecodes 0067: the meter samples the linear color
 
     // whether we're scaled at all
     bool scaled = any(notEqual(scale, float2(1.0f)));
@@ -1505,6 +1506,18 @@ void FRenderer::renderJob(DriverApi& driver, LinearAllocatorArena& arena, FView&
 
     // input can change below
     FrameGraphId<FrameGraphTexture> input = postProcessInput;
+
+    // lecodes 0067: the luminance meter (View::setLuminanceTarget) reads the scene-referred color
+    // here, before TAA, bloom and tone mapping touch it.
+    if (FRenderTarget const* const meter = view.getLuminanceTarget();
+            UTILS_UNLIKELY(meter && hasPostProcess && !colorGradingConfig.asSubpass)) {
+        auto const attachment = meter->getAttachment(RenderTarget::AttachmentPoint::COLOR0);
+        if (attachment.texture) {
+            ppm.luminanceMeter(fg, colorPassOutput.linearColor, xvp, meter->getHwHandle(),
+                    uint32_t(attachment.texture->getWidth(attachment.mipLevel)),
+                    uint32_t(attachment.texture->getHeight(attachment.mipLevel)));
+        }
+    }
 
     // Resolve depth -- which might be needed because of TAA or DoF. This pass will be culled
     // if the depth is not used below or if the depth is not MS (e.g. it could have been

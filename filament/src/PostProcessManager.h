@@ -336,6 +336,12 @@ public:
             FrameGraphId<FrameGraphTexture> input,
             FrameGraphId<FrameGraphTexture> depth) noexcept;
 
+    // lecodes 0067 (View::setLuminanceTarget): the log-luminance of `input`'s viewport `vp`,
+    // box-filtered into the caller's render target of width x height texels
+    void luminanceMeter(FrameGraph& fg, FrameGraphId<FrameGraphTexture> input,
+            filament::Viewport const& vp, backend::Handle<backend::HwRenderTarget> target,
+            uint32_t width, uint32_t height) noexcept;
+
     FrameGraphId<FrameGraphTexture> debugDisplayShadowTexture(FrameGraph& fg,
             FrameGraphId<FrameGraphTexture> input,
             FrameGraphId<FrameGraphTexture> shadowmap, float scale,

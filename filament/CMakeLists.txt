@@ -299,6 +299,7 @@ set(MATERIAL_SRCS
         src/materials/evsm/vsmMipmap.mat
         src/materials/flare/flare.mat
         src/materials/fog/fog.mat
+        src/materials/luminanceMeter.mat
         src/materials/fsr/fsr_easu.mat
         src/materials/fsr/fsr_easu_mobile.mat
         src/materials/fsr/fsr_easu_mobileF.mat

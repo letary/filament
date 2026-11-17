@@ -314,6 +314,7 @@ static const PostProcessManager::StaticMaterialInfo sMaterialList[] = {
         { "separableGaussianBlur4L",    MATERIAL(MATERIALS, SEPARABLEGAUSSIANBLUR),
                 { {"arraySampler", true }, {"componentCount", 4} } },
         { "debugShadowCascades",        MATERIAL(MATERIALS, DEBUGSHADOWCASCADES) },
+        { "luminanceMeter",             MATERIAL(MATERIALS, LUMINANCEMETER) },
         { "resolveDepth",               MATERIAL(MATERIALS, RESOLVEDEPTH) },
         { "shadowmap",                  MATERIAL(MATERIALS, SHADOWMAP) },
 };
@@ -4006,6 +4007,63 @@ FrameGraphId<FrameGraphTexture> PostProcessManager::debugShadowCascades(FrameGra
             });
 
     return debugShadowCascadePass->output;
+}
+
+// lecodes 0067 (View::setLuminanceTarget). The target is the caller's: imported, kept at the end
+// of the pass (the caller reads it back after the frame's views) and a side effect — nothing in
+// the frame graph reads it.
+void PostProcessManager::luminanceMeter(FrameGraph& fg,
+        FrameGraphId<FrameGraphTexture> const input, filament::Viewport const& vp,
+        backend::Handle<backend::HwRenderTarget> const target,
+        uint32_t const width, uint32_t const height) noexcept {
+
+    struct LuminanceMeterData {
+        FrameGraphId<FrameGraphTexture> input;
+        FrameGraphId<FrameGraphTexture> output;
+    };
+
+    FrameGraphId<FrameGraphTexture> const imported = fg.import("luminance meter target", {
+            .attachments = TargetBufferFlags::COLOR0,
+            .viewport = { 0, 0, width, height },
+            .keepOverrideEnd = TargetBufferFlags::COLOR0
+    }, target);
+
+    fg.addPass<LuminanceMeterData>("luminance meter",
+            [&](FrameGraph::Builder& builder, auto& data) {
+                data.input = builder.sample(input);
+                data.output = builder.declareRenderPass(imported);
+                builder.sideEffect();
+            },
+            [=, this](FrameGraphResources const& resources,
+                    auto const& data, DriverApi& driver) {
+                bindPostProcessDescriptorSet(driver);
+                bindPerRenderableDescriptorSet(driver);
+                auto color = resources.getTexture(data.input);
+                auto const& inputDesc = resources.getDescriptor(data.input);
+                auto const out = resources.getRenderPassInfo();
+
+                // the viewport in the input's uv, and a quarter of an output texel in it: the
+                // 4 x 4 taps of a texel are spread evenly over its footprint
+                float4 const viewport{
+                        float(vp.left)   / inputDesc.width,
+                        float(vp.bottom) / inputDesc.height,
+                        float(vp.width)  / inputDesc.width,
+                        float(vp.height) / inputDesc.height
+                };
+                auto const& material = getPostProcessMaterial("luminanceMeter");
+                FMaterialInstance* const mi = getMaterialInstance(mEngine, driver, material);
+                mi->setParameter("color", color, SamplerParams{
+                        .filterMag = SamplerMagFilter::LINEAR,
+                        .filterMin = SamplerMinFilter::LINEAR
+                });
+                mi->setParameter("viewport", viewport);
+                mi->setParameter("tapStep", float2{
+                        viewport.z / float(width * 4u),
+                        viewport.w / float(height * 4u)
+                });
+                commitAndRenderFullScreenQuad(driver, out, mi);
+                unbindAllDescriptorSets(driver);
+            });
 }
 
 FrameGraphId<FrameGraphTexture> PostProcessManager::debugCombineArrayTexture(FrameGraph& fg,
