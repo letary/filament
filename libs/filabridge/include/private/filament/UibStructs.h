@@ -305,7 +305,7 @@ struct LightsUib { // NOLINT(cppcoreguidelines-pro-type-member-init)
     }
 };
 static_assert(sizeof(LightsUib) == 64,
-        "the actual UBO is an array of 256 mat4");
+        "the actual UBO is an array of 255 mat4 and a reserved vec4 (lecodes 0069)");
 
 // ------------------------------------------------------------------------------------------------
 // MARK: -
@@ -326,6 +326,7 @@ struct ShadowUib { // NOLINT(cppcoreguidelines-pro-type-member-init)
         uint32_t evsm4_layer;                           //  4   // 0x00.00.01.FF
     };
     ShadowData shadows[CONFIG_MAX_SHADOWMAPS];
+    math::float4 reserved[8];   // lecodes 0069: the block's second member (UibGenerator.cpp)
 };
 static_assert(sizeof(ShadowUib) <= CONFIG_MINSPEC_UBO_SIZE,
         "ShadowUib exceeds max UBO size");
@@ -336,14 +337,16 @@ static_assert(sizeof(ShadowUib) <= CONFIG_MINSPEC_UBO_SIZE,
 // UBO froxel record buffer.
 struct FroxelRecordUib { // NOLINT(cppcoreguidelines-pro-type-member-init)
     static constexpr std::string_view _name{ "FroxelRecordUniforms" };
-    math::uint4 records[1024];
+    math::uint4 records[1023];
+    math::uint4 reserved;       // lecodes 0069: the block's second member (UibGenerator.cpp)
 };
 static_assert(sizeof(FroxelRecordUib) == 16384,
         "FroxelRecordUib should be exactly 16KiB");
 
 struct FroxelsUib { // NOLINT(cppcoreguidelines-pro-type-member-init)
     static constexpr std::string_view _name{ "FroxelsUniforms" };
-    math::uint4 records[1024];
+    math::uint4 records[1023];
+    math::uint4 reserved;       // lecodes 0069: the block's second member (UibGenerator.cpp)
 };
 static_assert(sizeof(FroxelsUib) == 16384,
         "FroxelsUib should be exactly 16KiB");

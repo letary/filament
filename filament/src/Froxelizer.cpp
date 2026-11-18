@@ -160,12 +160,16 @@ Froxelizer::Froxelizer(FEngine& engine)
     }
 
     size_t const froxelBufferByteCount = getFroxelBufferByteCount(driverApi);
-    mFroxelBufferEntryCount = froxelBufferByteCount / sizeof(FroxelEntry);
+    // lecodes 0069: the last uvec4 of both buffers is the block's reserved member
+    // (UibGenerator.cpp), the shader's arrays stop before it.
+    constexpr size_t RESERVED_BYTE_COUNT = 16;
+    mFroxelBufferEntryCount = (froxelBufferByteCount - RESERVED_BYTE_COUNT) / sizeof(FroxelEntry);
     mFroxelBufferEntryCount &= ~0xF; // make sure it's a multiple of 16 (helps vectorizing)
     assert_invariant(mFroxelBufferEntryCount >= 16); // that's also needed elsewhere
 
     size_t const froxelRecordBufferByteCount = getFroxelRecordBufferByteCount(driverApi);
-    mFroxelRecordBufferEntryCount = froxelRecordBufferByteCount / sizeof(uint8_t);
+    mFroxelRecordBufferEntryCount =
+            (froxelRecordBufferByteCount - RESERVED_BYTE_COUNT) / sizeof(uint8_t);
     assert_invariant(mFroxelRecordBufferEntryCount <= size_t(std::numeric_limits<uint16_t>::max()) + 1);
 
     mRecordsBuffer = driverApi.createBufferObject(

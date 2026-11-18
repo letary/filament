@@ -131,10 +131,11 @@ constexpr size_t CONFIG_NEXT_RESERVED_SPEC_CONSTANT = 12;
 constexpr size_t CONFIG_NEXT_DYNAMIC_SPEC_CONSTANT = CONFIG_MAX_RESERVED_SPEC_CONSTANTS + 3;
 
 // The maximum number of shadow maps possible.
-// There is currently a maximum limit of 128 shadow maps.
+// There is currently a maximum limit of 127 shadow maps.
 // Factors contributing to this limit:
 // - minspec for UBOs is 16KiB, which currently can hold a maximum of 128 entries
-constexpr size_t CONFIG_MAX_SHADOWMAPS = 128;
+// - lecodes 0069: the 128th entry is the block's reserved member (UibGenerator.cpp)
+constexpr size_t CONFIG_MAX_SHADOWMAPS = 127;
 
 // The maximum number of shadow layers.
 // There is currently a maximum limit of 255 layers.

@@ -184,7 +184,8 @@ FView::FView(FEngine& engine)
 #endif
 
     // allocate UBOs
-    mLightUbh = driver.createBufferObject(CONFIG_MAX_LIGHT_COUNT * sizeof(LightsUib),
+    // lecodes 0069: one LightsUib past the lights, the room of the block's reserved member
+    mLightUbh = driver.createBufferObject((CONFIG_MAX_LIGHT_COUNT + 1) * sizeof(LightsUib),
             BufferObjectBinding::UNIFORM, BufferUsage::DYNAMIC);
 
     mIsDynamicResolutionSupported = driver.isFrameTimeSupported();

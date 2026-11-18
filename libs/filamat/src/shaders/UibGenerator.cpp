@@ -258,11 +258,18 @@ BufferInterfaceBlock const& UibGenerator::getPerRenderableUib() noexcept {
     return uib;
 }
 
+// lecodes 0069: every block below that is ONE big array carries a second, unused member. ANGLE's
+// Direct3D 11 translator turns a std140 block whose only field is an array of 50+ elements into a
+// StructuredBuffer, which takes a shader-resource slot out of the same 16 the textures use: four
+// such blocks (lights, shadows, froxels, froxel records) left 12 samplers to a lit fragment shader,
+// and a 13th killed Chromium's GPU process inside the first draw. With two fields the block stays
+// a cbuffer. The member comes out of the array, so no block grows past the UBO size it had.
 BufferInterfaceBlock const& UibGenerator::getLightsUib() noexcept {
     static BufferInterfaceBlock const uib = BufferInterfaceBlock::Builder()
             .name(LightsUib::_name)
             .add({{ "lights", CONFIG_MAX_LIGHT_COUNT,
-                    BufferInterfaceBlock::Type::MAT4, Precision::HIGH }})
+                    BufferInterfaceBlock::Type::MAT4, Precision::HIGH },
+                  { "reserved", 0, BufferInterfaceBlock::Type::FLOAT4, Precision::HIGH }})
             .build();
     return uib;
 }
@@ -272,7 +279,9 @@ BufferInterfaceBlock const& UibGenerator::getShadowUib() noexcept {
             .name(ShadowUib::_name)
             .add({{ "shadows", CONFIG_MAX_SHADOWMAPS,
                     BufferInterfaceBlock::Type::STRUCT, {}, {},
-                    "ShadowData", sizeof(ShadowUib::ShadowData) }})
+                    "ShadowData", sizeof(ShadowUib::ShadowData) },
+                  { "reserved", sizeof(ShadowUib::reserved) / 16,
+                    BufferInterfaceBlock::Type::FLOAT4 }})
             .build();
     return uib;
 }
@@ -299,8 +308,9 @@ BufferInterfaceBlock const& UibGenerator::getPerRenderableMorphingUib() noexcept
 BufferInterfaceBlock const& UibGenerator::getFroxelRecordUib() noexcept {
     static BufferInterfaceBlock const uib = BufferInterfaceBlock::Builder()
             .name(FroxelRecordUib::_name)
-            .add({{ "records", 1024, BufferInterfaceBlock::Type::UINT4, Precision::HIGH, {},
-                    {}, {}, "CONFIG_FROXEL_RECORD_BUFFER_HEIGHT"}})
+            .add({{ "records", 1023, BufferInterfaceBlock::Type::UINT4, Precision::HIGH, {},
+                    {}, {}, "CONFIG_FROXEL_RECORD_BUFFER_HEIGHT"},
+                  { "reserved", 0, BufferInterfaceBlock::Type::UINT4, Precision::HIGH }})
             .build();
     return uib;
 }
@@ -308,8 +318,9 @@ BufferInterfaceBlock const& UibGenerator::getFroxelRecordUib() noexcept {
 BufferInterfaceBlock const& UibGenerator::getFroxelsUib() noexcept {
     static BufferInterfaceBlock const uib = BufferInterfaceBlock::Builder()
             .name(FroxelsUib::_name)
-            .add({{ "records", 1024, BufferInterfaceBlock::Type::UINT4, Precision::HIGH, {},
-                    {}, {}, "CONFIG_FROXEL_BUFFER_HEIGHT"}})
+            .add({{ "records", 1023, BufferInterfaceBlock::Type::UINT4, Precision::HIGH, {},
+                    {}, {}, "CONFIG_FROXEL_BUFFER_HEIGHT"},
+                  { "reserved", 0, BufferInterfaceBlock::Type::UINT4, Precision::HIGH }})
             .build();
     return uib;
 }

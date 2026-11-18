@@ -284,12 +284,14 @@ utils::io::sstream& CodeGenerator::generateCommonProlog(utils::io::sstream& out,
         // CONFIG_MAX_INSTANCES is only needed for WebGL, so we can replace it with a constant.
         // More information at https://github.com/gpuweb/gpuweb/issues/572#issuecomment-649760005
         out << "const int CONFIG_MAX_INSTANCES = " << (int)CONFIG_MAX_INSTANCES << ";\n";
-        out << "const int CONFIG_FROXEL_BUFFER_HEIGHT = 2048;\n";
+        // lecodes 0069: the HEIGHT constants count the array, one uvec4 short of the buffer (the
+        // block's reserved member, UibGenerator.cpp).
+        out << "const int CONFIG_FROXEL_BUFFER_HEIGHT = 2047;\n";
         // In WebGPU, Dawn enforces that the descriptor binding size must be >= the shader's
         // declared minBindingSize (height * 16 bytes). Since WebGPU doesn't support specialization
         // constants for UBO sizes, we must hardcode WebGPU minspec in both places.
-        // With a WebGPU UBO minspec of 64 KiB (65536 bytes), height is set to 65536 / 16 = 4096.
-        out << "const int CONFIG_FROXEL_RECORD_BUFFER_HEIGHT = 4096;\n";
+        // With a WebGPU UBO minspec of 64 KiB (65536 bytes), height is set to 65536 / 16 - 1 = 4095.
+        out << "const int CONFIG_FROXEL_RECORD_BUFFER_HEIGHT = 4095;\n";
         // Unlike the layout constants above, other specialization constants generated below
         // remain WGSL overrides whose defaults are specialized by WebGPUProgram before it creates
         // the shader module.
@@ -299,11 +301,12 @@ utils::io::sstream& CodeGenerator::generateCommonProlog(utils::io::sstream& out,
 
         // the default of 1024 (16KiB) is needed for 32% of Android devices
         generateSpecializationConstant(out, "CONFIG_FROXEL_BUFFER_HEIGHT",
-                +ReservedSpecializationConstants::CONFIG_FROXEL_BUFFER_HEIGHT, 1024);
+                +ReservedSpecializationConstants::CONFIG_FROXEL_BUFFER_HEIGHT, 1023);
 
-        // With a GLES UBO minspec of 16 KiB (16384 bytes), height is set to 16384 / 16 = 1024.
+        // With a GLES UBO minspec of 16 KiB (16384 bytes), height is set to 16384 / 16 - 1 = 1023
+        // (lecodes 0069: the last uvec4 is the block's reserved member).
         generateSpecializationConstant(out, "CONFIG_FROXEL_RECORD_BUFFER_HEIGHT",
-                +ReservedSpecializationConstants::CONFIG_FROXEL_RECORD_BUFFER_HEIGHT, 1024);
+                +ReservedSpecializationConstants::CONFIG_FROXEL_RECORD_BUFFER_HEIGHT, 1023);
     }
 
     // directional shadowmap visualization
