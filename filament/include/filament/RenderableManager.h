@@ -764,7 +764,7 @@ public:
 
     /**
      * lecodes 0064: A PER-RENDERABLE VECTOR FOR THE MATERIAL. Six free float4 slots (index 0..5) a material's shader
-     * reads as `object_uniforms_ambientCube[index]` - data that differs per renderable while the material instance
+     * reads with `getObjectSlot(index)` - data that differs per renderable while the material instance
      * is shared (a lightmap's atlas rectangle per primitive: thousands of placements, one instance). The slots are
      * the ambient cube's storage, so a renderable has one or the other: setAmbientCube replaces the slots and the
      * first setReservedSlot replaces a cube; clearAmbientCube clears both. Feature level 1 and up.

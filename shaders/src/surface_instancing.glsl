@@ -13,6 +13,8 @@ highp float object_uniforms_userData;   // TODO: We need a better solution, this
 highp vec4 object_uniforms_ambientCube[7];
 // lecodes 0061: the LOD cross-fade share (RenderableManager::setLodFade; reserved[7] = (share, 7886 = the signature, 0, 0)), 0 = none
 highp float object_uniforms_lodFade;
+// lecodes 0064: this draw's index into objectUniforms.data (initObjectUniforms), for getObjectSlot()
+highp int object_uniforms_index;
 #endif
 
 //------------------------------------------------------------------------------
@@ -54,15 +56,19 @@ void initObjectUniforms() {
 #if MATERIAL_FEATURE_LEVEL > 0
     object_uniforms_ambientCube[6]              = objectUniforms.data[i].reserved[6];
     object_uniforms_lodFade                     = objectUniforms.data[i].reserved[7].y == 7886.0 ? objectUniforms.data[i].reserved[7].x : 0.0;
-    // lecodes 0064: read whether or not the cube's signature is there - without it they are the renderable's free
-    // slots (RenderableManager::setReservedSlot), which a material reads itself; the cube's own lighting still checks
-    // the signature in [6] before it uses them. A shader that reads neither drops the copies.
-    object_uniforms_ambientCube[0]              = objectUniforms.data[i].reserved[0];
-    object_uniforms_ambientCube[1]              = objectUniforms.data[i].reserved[1];
-    object_uniforms_ambientCube[2]              = objectUniforms.data[i].reserved[2];
-    object_uniforms_ambientCube[3]              = objectUniforms.data[i].reserved[3];
-    object_uniforms_ambientCube[4]              = objectUniforms.data[i].reserved[4];
-    object_uniforms_ambientCube[5]              = objectUniforms.data[i].reserved[5];
+    // lecodes 0064: the six sides are copied only under the cube's signature (Scene.cpp) - the cube's lighting is their
+    // one reader here. Without the signature reserved[0..5] are the renderable's free slots, and getObjectSlot() reads
+    // the one it is asked for straight from the block: copied for every fragment of every material (as 0064 first
+    // did) they halved the frame on a Mali-G77 in a scene with no lightmap at all (Drift, 2026-11-20: 71 -> 32 fps).
+    object_uniforms_index                       = i;
+    if (object_uniforms_ambientCube[6].yz == vec2(7885.0, -7885.0)) {
+        object_uniforms_ambientCube[0]          = objectUniforms.data[i].reserved[0];
+        object_uniforms_ambientCube[1]          = objectUniforms.data[i].reserved[1];
+        object_uniforms_ambientCube[2]          = objectUniforms.data[i].reserved[2];
+        object_uniforms_ambientCube[3]          = objectUniforms.data[i].reserved[3];
+        object_uniforms_ambientCube[4]          = objectUniforms.data[i].reserved[4];
+        object_uniforms_ambientCube[5]          = objectUniforms.data[i].reserved[5];
+    }
 #endif
 }
 
@@ -73,7 +79,7 @@ void initObjectUniforms() {
  */
 highp vec4 getObjectSlot(int slot) {
 #if MATERIAL_FEATURE_LEVEL > 0
-    return object_uniforms_ambientCube[slot];
+    return objectUniforms.data[object_uniforms_index].reserved[slot];
 #else
     return vec4(0.0);
 #endif
